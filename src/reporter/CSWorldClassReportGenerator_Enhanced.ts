@@ -2081,9 +2081,11 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
         });
 
         // Convert map to array for display (sorted by worker ID)
-        const threads = Array.from(workerMap.entries())
-            .sort((a, b) => a[0] - b[0])
-            .map(entry => entry[1]);
+        // Also store the worker IDs for proper labeling
+        const workerEntries = Array.from(workerMap.entries())
+            .sort((a, b) => a[0] - b[0]);
+        const threads = workerEntries.map(entry => entry[1]);
+        const workerIds = workerEntries.map(entry => entry[0]);
         
         // Generate timeline visualization
         const timelineHTML = `
@@ -2253,8 +2255,9 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
             // Initialize timeline Gantt chart when the view is shown
             setTimeout(() => {
                 const timelineData = ${JSON.stringify(threads)};
+                const workerIds = ${JSON.stringify(workerIds)};
                 if (typeof initializeTimelineGantt === 'function') {
-                    initializeTimelineGantt(timelineData);
+                    initializeTimelineGantt(timelineData, workerIds);
                 }
 
                 // Initialize Scatter Plot Chart
@@ -2301,8 +2304,9 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
                     timelineTab.addEventListener('click', () => {
                         setTimeout(() => {
                             const timelineData = ${JSON.stringify(threads)};
+                            const workerIds = ${JSON.stringify(workerIds)};
                             if (typeof initializeTimelineGantt === 'function') {
-                                initializeTimelineGantt(timelineData);
+                                initializeTimelineGantt(timelineData, workerIds);
                             }
                         }, 100);
                     });
@@ -2670,38 +2674,36 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
         const scenarios = suite.scenarios || [];
         const startTime = suite.startTime ? new Date(suite.startTime).getTime() : Date.now();
 
-        // Group scenarios by parallel execution (simulated by overlapping times)
-        const threads: any[] = [];
-        let currentThread = 0;
+        // Group scenarios by actual worker ID (same logic as generateTimelineView)
+        const workerMap = new Map<number, any[]>();
 
-        scenarios.forEach((scenario, index) => {
+        scenarios.forEach((scenario: any, index) => {
             const scenarioStart = scenario.startTime ? new Date(scenario.startTime).getTime() : startTime + (index * 1000);
             const scenarioEnd = scenario.endTime ? new Date(scenario.endTime).getTime() : scenarioStart + (scenario.duration || 1000);
 
-            // Check if scenario can fit in any existing thread
-            let assignedThread = -1;
-            for (let i = 0; i < threads.length; i++) {
-                const lastInThread = threads[i][threads[i].length - 1];
-                if (!lastInThread || lastInThread.endTime <= scenarioStart) {
-                    assignedThread = i;
-                    break;
-                }
+            // Use actual workerId if available, otherwise default to 1
+            const workerId = scenario.workerId || 1;
+
+            if (!workerMap.has(workerId)) {
+                workerMap.set(workerId, []);
             }
 
-            if (assignedThread === -1) {
-                assignedThread = threads.length;
-                threads.push([]);
-            }
-
-            threads[assignedThread].push({
+            workerMap.get(workerId)!.push({
                 name: scenario.name,
                 feature: scenario.feature || 'Unknown',
                 status: scenario.status,
                 startTime: scenarioStart,
                 endTime: scenarioEnd,
-                duration: scenario.duration || 1000
+                duration: scenario.duration || (scenarioEnd - scenarioStart),
+                workerId: workerId
             });
         });
+
+        // Convert map to array for display (sorted by worker ID)
+        const workerEntries = Array.from(workerMap.entries())
+            .sort((a, b) => a[0] - b[0]);
+        const threads = workerEntries.map(entry => entry[1]);
+        const workerIds = workerEntries.map(entry => entry[0]);
         return `
         // Initialize dayjs plugins
         dayjs.extend(dayjs_plugin_duration);
@@ -2745,8 +2747,9 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
             } else if (viewName === 'timeline') {
                 // Initialize timeline Gantt chart
                 const timelineData = ${JSON.stringify(threads)};
+                const workerIds = ${JSON.stringify(workerIds)};
                 setTimeout(() => {
-                    initializeTimelineGantt(timelineData);
+                    initializeTimelineGantt(timelineData, workerIds);
                 }, 200);
             } else if (viewName === 'failure-analysis') {
                 initializeFailureAnalysisCharts();
@@ -2756,7 +2759,7 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
         }
 
         // Dashboard charts initialization
-        function initializeTimelineGantt(timelineData) {
+        function initializeTimelineGantt(timelineData, workerIds) {
             const canvas = document.getElementById('timeline-gantt-chart');
             if (!canvas || !timelineData || timelineData.length === 0) {
                 console.log('Timeline chart initialization failed:', {
@@ -2850,12 +2853,14 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
             // Draw thread labels and scenarios
             timelineData.forEach((thread, threadIndex) => {
                 const y = topMargin + threadIndex * (barHeight + barGap);
-                
+
                 // Draw thread label with better font
                 ctx.fillStyle = '#333';
                 ctx.font = '11px Arial';
                 ctx.textAlign = 'right';
-                ctx.fillText('Worker ' + (threadIndex + 1), leftMargin - 10, y + barHeight / 2 + 5);
+                // Use actual worker ID from workerIds array
+                const workerId = workerIds && workerIds[threadIndex] ? workerIds[threadIndex] : (threadIndex + 1);
+                ctx.fillText('Worker ' + workerId, leftMargin - 10, y + barHeight / 2 + 5);
                 
                 // Draw scenarios in thread
                 thread.forEach(scenario => {
