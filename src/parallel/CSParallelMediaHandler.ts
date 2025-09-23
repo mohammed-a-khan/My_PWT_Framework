@@ -356,6 +356,162 @@ export class CSParallelMediaHandler {
     }
 }
 
+/**
+ * Copy artifacts from worker to main test results directory
+ * This is used during parallel execution to consolidate artifacts
+ */
+export async function copyArtifactsFromWorker(
+    artifacts: any,
+    workerId: number
+): Promise<any> {
+    const config = CSConfigurationManager.getInstance();
+    const fs = require('fs');
+    const testResultsDir = config.get('TEST_RESULTS_DIR') || path.join(process.cwd(), 'reports', 'test-results');
+
+    const copiedArtifacts: any = {
+        screenshots: [],
+        videos: [],
+        traces: [],
+        har: [],
+        logs: []
+    };
+
+    // Helper function to ensure directory exists
+    const ensureDir = (dir: string) => {
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+    };
+
+    // Copy screenshots
+    if (artifacts.screenshots && artifacts.screenshots.length > 0) {
+        const screenshotDir = path.join(testResultsDir, 'screenshots');
+        ensureDir(screenshotDir);
+
+        for (const screenshot of artifacts.screenshots) {
+            if (fs.existsSync(screenshot)) {
+                const filename = path.basename(screenshot);
+                const destPath = path.join(screenshotDir, filename);
+
+                // If source and dest are different, copy the file
+                if (screenshot !== destPath) {
+                    try {
+                        fs.copyFileSync(screenshot, destPath);
+                        copiedArtifacts.screenshots.push(filename);  // Store just filename for reports
+                    } catch (error) {
+                        CSReporter.debug(`Failed to copy screenshot: ${error}`);
+                        copiedArtifacts.screenshots.push(filename);  // Still include the filename
+                    }
+                } else {
+                    copiedArtifacts.screenshots.push(filename);
+                }
+            }
+        }
+    }
+
+    // Copy videos
+    if (artifacts.videos && artifacts.videos.length > 0) {
+        const videoDir = path.join(testResultsDir, 'videos');
+        ensureDir(videoDir);
+
+        for (const video of artifacts.videos) {
+            if (fs.existsSync(video)) {
+                const filename = path.basename(video);
+                const destPath = path.join(videoDir, filename);
+
+                if (video !== destPath) {
+                    try {
+                        fs.copyFileSync(video, destPath);
+                        copiedArtifacts.videos.push(filename);
+                    } catch (error) {
+                        CSReporter.debug(`Failed to copy video: ${error}`);
+                        copiedArtifacts.videos.push(filename);
+                    }
+                } else {
+                    copiedArtifacts.videos.push(filename);
+                }
+            }
+        }
+    }
+
+    // Copy traces
+    if (artifacts.traces && artifacts.traces.length > 0) {
+        const traceDir = path.join(testResultsDir, 'traces');
+        ensureDir(traceDir);
+
+        for (const trace of artifacts.traces) {
+            if (fs.existsSync(trace)) {
+                const filename = path.basename(trace);
+                const destPath = path.join(traceDir, filename);
+
+                if (trace !== destPath) {
+                    try {
+                        fs.copyFileSync(trace, destPath);
+                        copiedArtifacts.traces.push(filename);
+                    } catch (error) {
+                        CSReporter.debug(`Failed to copy trace: ${error}`);
+                        copiedArtifacts.traces.push(filename);
+                    }
+                } else {
+                    copiedArtifacts.traces.push(filename);
+                }
+            }
+        }
+    }
+
+    // Copy HAR files
+    if (artifacts.har && artifacts.har.length > 0) {
+        const harDir = path.join(testResultsDir, 'har');
+        ensureDir(harDir);
+
+        for (const har of artifacts.har) {
+            if (fs.existsSync(har)) {
+                const filename = path.basename(har);
+                const destPath = path.join(harDir, filename);
+
+                if (har !== destPath) {
+                    try {
+                        fs.copyFileSync(har, destPath);
+                        copiedArtifacts.har.push(filename);
+                    } catch (error) {
+                        CSReporter.debug(`Failed to copy HAR: ${error}`);
+                        copiedArtifacts.har.push(filename);
+                    }
+                } else {
+                    copiedArtifacts.har.push(filename);
+                }
+            }
+        }
+    }
+
+    // Copy logs
+    if (artifacts.logs && artifacts.logs.length > 0) {
+        const logsDir = path.join(testResultsDir, 'console-logs');
+        ensureDir(logsDir);
+
+        for (const log of artifacts.logs) {
+            if (fs.existsSync(log)) {
+                const filename = path.basename(log);
+                const destPath = path.join(logsDir, filename);
+
+                if (log !== destPath) {
+                    try {
+                        fs.copyFileSync(log, destPath);
+                        copiedArtifacts.logs.push(filename);
+                    } catch (error) {
+                        CSReporter.debug(`Failed to copy log: ${error}`);
+                        copiedArtifacts.logs.push(filename);
+                    }
+                } else {
+                    copiedArtifacts.logs.push(filename);
+                }
+            }
+        }
+    }
+
+    return copiedArtifacts;
+}
+
 interface ScreenshotOptions {
     fullPage?: boolean;
     clip?: { x: number; y: number; width: number; height: number };

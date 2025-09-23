@@ -209,21 +209,27 @@ async function execute(mode: string) {
                 config.set('BROWSER', args.browser);
             }
             
-            // Handle parallel execution
-            if (args.parallel !== undefined) {
-                // parallel should be boolean
-                options.parallel = args.parallel === true || args.parallel === 'true';
-                config.set('PARALLEL', String(options.parallel));
-            }
+            // Handle parallel execution with workers
+            if (args.parallel !== undefined || args.workers !== undefined) {
+                const workerCount = args.workers ? parseInt(args.workers) : 3;
 
-            // Handle workers parameter separately
-            if (args.workers !== undefined) {
-                options.workers = parseInt(args.workers) || 3;
-                config.set('WORKERS', String(options.workers));
-                // If workers is specified, also enable parallel mode
-                if (options.workers > 1 && options.parallel === undefined) {
-                    options.parallel = true;
-                    config.set('PARALLEL', 'true');
+                if (args.parallel === true || args.parallel === 'true') {
+                    // When parallel is true, set it to the number of workers
+                    options.parallel = workerCount;
+                    config.set('PARALLEL', String(workerCount));
+                    config.set('MAX_PARALLEL_WORKERS', String(workerCount));
+                } else if (args.parallel === false || args.parallel === 'false') {
+                    // Explicitly disabled
+                    options.parallel = 1;
+                    config.set('PARALLEL', '1');
+                } else if (typeof args.parallel === 'number' || typeof args.parallel === 'string') {
+                    // Numeric value provided
+                    options.parallel = typeof args.parallel === 'number' ? args.parallel : parseInt(args.parallel);
+                    config.set('PARALLEL', String(options.parallel));
+                } else if (args.workers && !args.parallel) {
+                    // Only workers specified, treat as parallel
+                    options.parallel = workerCount;
+                    config.set('PARALLEL', String(workerCount));
                 }
             }
 

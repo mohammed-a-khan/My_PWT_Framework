@@ -45,21 +45,12 @@ class WorkerProcess {
         process.env.IS_WORKER = 'true';
         process.env.WORKER_ID = String(this.workerId);
 
-        // Pre-load common modules to speed up initialization
-        this.preloadModules();
-
         this.setupProcessHandlers();
 
-        // Send ready message
-        this.sendMessage({ type: 'ready', workerId: this.workerId });
-    }
-
-    private preloadModules() {
-        // Preload heavy modules during worker startup
-        require('../bdd/CSBDDRunner');
-        require('../browser/CSBrowserManager');
-        require('../core/CSConfigurationManager');
-        require('../reporter/CSReporter');
+        // Send ready message after a small delay to ensure IPC is ready
+        process.nextTick(() => {
+            this.sendMessage({ type: 'ready', workerId: this.workerId });
+        });
     }
 
     private setupProcessHandlers() {
@@ -201,3 +192,5 @@ class WorkerProcess {
 if (require.main === module) {
     new WorkerProcess();
 }
+
+export { WorkerProcess };
