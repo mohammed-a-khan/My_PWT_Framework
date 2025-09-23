@@ -648,16 +648,33 @@ export class CSBrowserManager {
         // Close context - this triggers video/HAR save automatically
         await this.closeContext();
 
+        // Wait for video files to be released by Playwright
+        // Playwright needs time to finalize video encoding after context closes
+        if (this.videosToDelete.length > 0) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
         // Clean up artifacts that were marked for deletion after context is closed
-        // Delete videos marked for deletion
+        // Delete videos marked for deletion with retry logic
         for (const videoToDelete of this.videosToDelete) {
-            try {
-                if (fs.existsSync(videoToDelete)) {
-                    fs.unlinkSync(videoToDelete);
-                    CSReporter.debug(`Video deleted: ${videoToDelete}`);
+            let retries = 3;
+            while (retries > 0) {
+                try {
+                    if (fs.existsSync(videoToDelete)) {
+                        fs.unlinkSync(videoToDelete);
+                        CSReporter.debug(`Video deleted: ${videoToDelete}`);
+                        break;
+                    }
+                } catch (error: any) {
+                    retries--;
+                    if (retries > 0 && error.code === 'EBUSY') {
+                        // File is still locked, wait a bit and retry
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    } else {
+                        CSReporter.debug(`Failed to delete video: ${error}`);
+                        break;
+                    }
                 }
-            } catch (error) {
-                CSReporter.debug(`Failed to delete video: ${error}`);
             }
         }
         this.videosToDelete = [];

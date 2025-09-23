@@ -93,14 +93,26 @@ export class CSTestResultsManager {
      * Get directory paths for different artifact types
      */
     public getDirectories() {
+        // Use currentTestRunDir if available, otherwise get from config (for worker processes)
+        let baseDir = this.currentTestRunDir;
+        if (!baseDir) {
+            baseDir = this.config.get('TEST_RESULTS_DIR', '');
+            if (!baseDir) {
+                // Fallback: create a default directory if none exists
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, -5);
+                baseDir = path.join(process.cwd(), 'reports', `test-results-${timestamp}`);
+                CSReporter.debug(`Test results directory not set, using fallback: ${baseDir}`);
+            }
+        }
+
         return {
-            base: this.currentTestRunDir,
-            videos: path.join(this.currentTestRunDir, 'videos'),
-            screenshots: path.join(this.currentTestRunDir, 'screenshots'),
-            traces: path.join(this.currentTestRunDir, 'traces'),
-            har: path.join(this.currentTestRunDir, 'har'),
-            consoleLogs: path.join(this.currentTestRunDir, 'console-logs'),
-            reports: path.join(this.currentTestRunDir, 'reports')
+            base: baseDir,
+            videos: path.join(baseDir, 'videos'),
+            screenshots: path.join(baseDir, 'screenshots'),
+            traces: path.join(baseDir, 'traces'),
+            har: path.join(baseDir, 'har'),
+            consoleLogs: path.join(baseDir, 'console-logs'),
+            reports: path.join(baseDir, 'reports')
         };
     }
     

@@ -1049,9 +1049,10 @@ export class CSBDDRunner {
 
             // Capture screenshot on step failure based on capture mode
             // Always capture on failure regardless of error type
-            const screenshotCaptureMode = this.config.get('SCREENSHOT_CAPTURE_MODE', 'on-failure-only').toLowerCase();
+            const screenshotCaptureMode = this.config.get('SCREENSHOT_CAPTURE_MODE', 'on-failure').toLowerCase();
             const shouldCaptureScreenshot = (
                 screenshotCaptureMode === 'always' ||
+                screenshotCaptureMode === 'on-failure' ||
                 screenshotCaptureMode === 'on-failure-only'
             );
 
@@ -1062,35 +1063,35 @@ export class CSBDDRunner {
                     // Check if page is still valid and not closed
                     if (!page || page.isClosed()) {
                         CSReporter.warn('Page is closed or invalid - cannot take screenshot');
-                        return;
-                    }
+                    } else {
+                        // Small wait to ensure any error messages are rendered
+                        await page.waitForTimeout(100);
 
-                    // Small wait to ensure any error messages are rendered
-                    await page.waitForTimeout(100);
+                        const dirs = this.resultsManager.getDirectories();
+                        const screenshotDir = dirs.screenshots;
+                        const fs = require('fs');
+                        if (!fs.existsSync(screenshotDir)) {
+                            fs.mkdirSync(screenshotDir, { recursive: true });
+                        }
+                        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                        const stepName = `${step.keyword}-${stepText}`.replace(/[^a-zA-Z0-9]/g, '-').substring(0, 50);
+                        const filename = `step-failure-${stepName}-${timestamp}.png`;
+                        const screenshotPath = `${screenshotDir}/${filename}`;
+                        await page.screenshot({
+                            path: screenshotPath,
+                            fullPage: this.config.getBoolean('SCREENSHOT_FULL_PAGE', false)
+                        });
+                        CSReporter.info(`Step failure screenshot: ${screenshotPath}`);
+                        // Store the full path for artifact collection
+                        this.scenarioContext.addScreenshot(screenshotPath, 'step-failure');
 
-                    const dirs = this.resultsManager.getDirectories();
-                    const screenshotDir = dirs.screenshots;
-                    const fs = require('fs');
-                    if (!fs.existsSync(screenshotDir)) {
-                        fs.mkdirSync(screenshotDir, { recursive: true });
-                    }
-                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                    const stepName = `${step.keyword}-${stepText}`.replace(/[^a-zA-Z0-9]/g, '-').substring(0, 50);
-                    const filename = `step-failure-${stepName}-${timestamp}.png`;
-                    const screenshotPath = `${screenshotDir}/${filename}`;
-                    await page.screenshot({
-                        path: screenshotPath,
-                        fullPage: this.config.getBoolean('SCREENSHOT_FULL_PAGE', false)
-                    });
-                    CSReporter.info(`Step failure screenshot: ${screenshotPath}`);
-                    this.scenarioContext.addScreenshot(filename, 'step-failure');  // Store just filename
+                        // Attach screenshot to current step using filename only for reports
+                        this.scenarioContext.setCurrentStepScreenshot(filename);
 
-                    // Attach screenshot to current step using filename only for reports
-                    this.scenarioContext.setCurrentStepScreenshot(filename);
-
-                    // Also add to context for the report (if method exists)
-                    if (typeof (this.context as any).addArtifact === 'function') {
-                        (this.context as any).addArtifact('screenshot', screenshotPath, `Step Failure: ${step.keyword} ${stepText}`);
+                        // Also add to context for the report (if method exists)
+                        if (typeof (this.context as any).addArtifact === 'function') {
+                            (this.context as any).addArtifact('screenshot', screenshotPath, `Step Failure: ${step.keyword} ${stepText}`);
+                        }
                     }
                 } catch (screenshotError) {
                     CSReporter.debug(`Failed to capture step failure screenshot: ${screenshotError}`);

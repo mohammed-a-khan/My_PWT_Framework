@@ -2054,40 +2054,36 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
         // Calculate timeline data
         const scenarios = suite.scenarios || [];
         const startTime = suite.startTime ? new Date(suite.startTime).getTime() : Date.now();
-        
-        // Group scenarios by parallel execution (simulated by overlapping times)
-        const threads: any[] = [];
-        let currentThread = 0;
-        
-        scenarios.forEach((scenario, index) => {
+
+        // Group scenarios by actual worker ID
+        const workerMap = new Map<number, any[]>();
+
+        scenarios.forEach((scenario: any, index) => {
             const scenarioStart = scenario.startTime ? new Date(scenario.startTime).getTime() : startTime + (index * 1000);
             const scenarioEnd = scenario.endTime ? new Date(scenario.endTime).getTime() : scenarioStart + (scenario.duration || 1000);
-            
-            // Find a thread where this scenario fits without overlap
-            let assignedThread = -1;
-            for (let t = 0; t < threads.length; t++) {
-                const lastInThread = threads[t][threads[t].length - 1];
-                if (lastInThread && lastInThread.endTime <= scenarioStart) {
-                    assignedThread = t;
-                    break;
-                }
+
+            // Use actual workerId if available, otherwise assign based on overlap
+            const workerId = scenario.workerId || 1;
+
+            if (!workerMap.has(workerId)) {
+                workerMap.set(workerId, []);
             }
-            
-            if (assignedThread === -1) {
-                assignedThread = threads.length;
-                threads.push([]);
-            }
-            
-            threads[assignedThread].push({
+
+            workerMap.get(workerId)!.push({
                 name: scenario.name,
                 feature: scenario.feature || 'Unknown',
                 status: scenario.status,
                 startTime: scenarioStart,
                 endTime: scenarioEnd,
                 duration: scenario.duration || (scenarioEnd - scenarioStart),
-                thread: assignedThread
+                workerId: workerId
             });
         });
+
+        // Convert map to array for display (sorted by worker ID)
+        const threads = Array.from(workerMap.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(entry => entry[1]);
         
         // Generate timeline visualization
         const timelineHTML = `
@@ -2095,7 +2091,7 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
             <h2>📊 Execution Timeline</h2>
             <div class="timeline-info">
                 <div class="timeline-stat">
-                    <span class="stat-label">Total Threads:</span>
+                    <span class="stat-label">Total Workers:</span>
                     <span class="stat-value">${threads.length}</span>
                 </div>
                 <div class="timeline-stat">
@@ -2125,10 +2121,10 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
             </div>
             
             <div class="timeline-details">
-                <h3>Thread Details</h3>
+                <h3>Worker Details</h3>
                 ${threads.map((thread, threadIndex) => `
                     <div class="thread-details">
-                        <h4>Thread ${threadIndex + 1}</h4>
+                        <h4>Worker ${threadIndex + 1}</h4>
                         <div class="thread-scenarios">
                             ${thread.map((scenario: any) => `
                                 <div class="timeline-scenario ${scenario.status}">
@@ -2859,7 +2855,7 @@ ${fs.readFileSync(path.join(__dirname, 'CSCustomChartsEmbedded.js'), 'utf8')}
                 ctx.fillStyle = '#333';
                 ctx.font = '11px Arial';
                 ctx.textAlign = 'right';
-                ctx.fillText('Thread ' + (threadIndex + 1), leftMargin - 10, y + barHeight / 2 + 5);
+                ctx.fillText('Worker ' + (threadIndex + 1), leftMargin - 10, y + barHeight / 2 + 5);
                 
                 // Draw scenarios in thread
                 thread.forEach(scenario => {

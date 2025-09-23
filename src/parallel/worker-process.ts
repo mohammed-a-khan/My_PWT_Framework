@@ -38,7 +38,6 @@ class WorkerProcess {
     private workerId: number;
     private bddRunner: any;
     private browserManager: any;
-    private browserInitialized: boolean = false;
 
     constructor() {
         this.workerId = parseInt(process.env.WORKER_ID || '0');
@@ -115,7 +114,6 @@ class WorkerProcess {
             if (!this.browserManager) {
                 this.browserManager = CSBrowserManager.getInstance();
                 // Browser will be initialized on first use by the BDD runner
-                this.browserInitialized = true;
             }
 
             // Execute the scenario using the existing framework method
@@ -148,17 +146,18 @@ class WorkerProcess {
             result.status = 'failed';
             result.error = error.message;
         } finally {
-            // Only close pages, keep browser warm for next scenario
+            // Close browser with test status to handle video deletion
             try {
-                if (this.browserManager && this.browserManager.context) {
-                    const pages = this.browserManager.context.pages();
-                    // Close all pages except keep context alive
-                    for (const page of pages) {
-                        await page.close().catch(() => {});
-                    }
+                if (this.browserManager) {
+                    // Pass the scenario result status to handle video deletion
+                    await this.browserManager.close(result.status);
+                    console.log(`[Worker ${this.workerId}] Browser closed with status: ${result.status}`);
+
+                    // Browser will be re-initialized automatically on next use
                 }
             } catch (e) {
                 // Ignore cleanup errors
+                console.debug(`[Worker ${this.workerId}] Error during browser cleanup: ${e}`);
             }
         }
 
