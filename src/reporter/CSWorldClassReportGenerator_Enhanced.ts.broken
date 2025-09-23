@@ -1,0 +1,1733 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { CSConfigurationManager } from '../core/CSConfigurationManager';
+import { CSReporter } from './CSReporter';
+import { htmlEscape, attrEscape, jsEscape } from './utils/HtmlSanitizer';
+
+// Test result types - matching backup framework structure
+interface TestStep {
+    name: string;
+    status: 'passed' | 'failed' | 'skipped';
+    duration?: number;
+    error?: string;
+    screenshot?: string;
+    actions?: Array<{
+        action: string;
+        status: string;
+        duration?: number;
+    }>;
+    testData?: {
+        headers: string[];
+        values: any[];
+        totalColumns: number;
+        usedColumns: string[];
+        iterationNumber: number;
+        totalIterations: number;
+        source?: {
+            type: string;
+            file?: string;
+            sheet?: string;
+            delimiter?: string;
+            filter?: string;
+            connection?: string;
+            query?: string;
+        };
+    };
+}
+
+interface TestScenario {
+    name: string;
+    status: 'passed' | 'failed' | 'skipped';
+    duration?: number;
+    steps: TestStep[];
+    tags?: string[];
+    feature?: string;
+    testData?: any;
+    startTime?: Date;
+    endTime?: Date;
+}
+
+// Main TestSuite interface - compatible with backup framework
+interface TestSuite {
+    name: string;
+    scenarios: TestScenario[];
+    startTime: Date;
+    endTime: Date;
+    duration?: number;
+    totalScenarios?: number;
+    passedScenarios?: number;
+    failedScenarios?: number;
+    skippedScenarios?: number;
+}
+
+export class CSWorldClassReportGenerator_Enhanced {
+    private config: CSConfigurationManager;
+    private static readonly PROFESSIONAL_STYLES = `
+        <style>
+            :root {
+                --primary-color: #1a73e8;
+                --success-color: #34a853;
+                --danger-color: #ea4335;
+                --warning-color: #fbbc05;
+                --info-color: #4285f4;
+                --dark-color: #202124;
+                --light-bg: #f8f9fa;
+                --border-color: #dadce0;
+                --text-primary: #202124;
+                --text-secondary: #5f6368;
+                --card-shadow: 0 1px 2px 0 rgba(60,64,67,.3), 0 1px 3px 1px rgba(60,64,67,.15);
+                --hover-shadow: 0 1px 3px 0 rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);
+                --gutter: 24px;
+                --border-radius: 8px;
+                --transition-speed: 0.3s;
+                --header-height: 64px;
+                --sidebar-width: 280px;
+            }
+
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family: 'Google Sans', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                color: var(--text-primary);
+                line-height: 1.6;
+            }
+
+            .container {
+                max-width: 1400px;
+                margin: 0 auto;
+                padding: var(--gutter);
+                animation: fadeIn 0.5s ease-in;
+            }
+
+            @keyframes fadeIn {
+                from { opacity: 0; transform: translateY(20px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+
+            /* Header Section */
+            .header {
+                background: white;
+                border-radius: var(--border-radius);
+                padding: 32px;
+                box-shadow: var(--card-shadow);
+                margin-bottom: var(--gutter);
+                position: relative;
+                overflow: hidden;
+            }
+
+            .header::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 4px;
+                background: linear-gradient(90deg, var(--primary-color), var(--success-color), var(--warning-color), var(--danger-color));
+            }
+
+            .header h1 {
+                font-size: 2.5rem;
+                font-weight: 400;
+                margin-bottom: 16px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+
+            .header .metadata {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 16px;
+                margin-top: 24px;
+            }
+
+            .metadata-item {
+                display: flex;
+                align-items: center;
+                padding: 12px;
+                background: var(--light-bg);
+                border-radius: 6px;
+            }
+
+            .metadata-item i {
+                margin-right: 8px;
+                color: var(--primary-color);
+            }
+
+            /* Summary Cards */
+            .summary-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: var(--gutter);
+                margin-bottom: var(--gutter);
+            }
+
+            .summary-card {
+                background: white;
+                border-radius: var(--border-radius);
+                padding: 24px;
+                box-shadow: var(--card-shadow);
+                transition: transform var(--transition-speed), box-shadow var(--transition-speed);
+                position: relative;
+                overflow: hidden;
+            }
+
+            .summary-card:hover {
+                transform: translateY(-4px);
+                box-shadow: var(--hover-shadow);
+            }
+
+            .summary-card::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 4px;
+                height: 100%;
+            }
+
+            .summary-card.passed::before { background: var(--success-color); }
+            .summary-card.failed::before { background: var(--danger-color); }
+            .summary-card.skipped::before { background: var(--warning-color); }
+            .summary-card.total::before { background: var(--primary-color); }
+
+            .summary-card h3 {
+                color: var(--text-secondary);
+                font-size: 0.875rem;
+                font-weight: 500;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 8px;
+            }
+
+            .summary-card .value {
+                font-size: 2.5rem;
+                font-weight: 300;
+                color: var(--text-primary);
+            }
+
+            .summary-card .percentage {
+                font-size: 0.875rem;
+                color: var(--text-secondary);
+                margin-top: 8px;
+            }
+
+            /* Charts Section */
+            .charts-container {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+                gap: var(--gutter);
+                margin-bottom: var(--gutter);
+            }
+
+            .chart-card {
+                background: white;
+                border-radius: var(--border-radius);
+                padding: 24px;
+                box-shadow: var(--card-shadow);
+            }
+
+            .chart-card h3 {
+                margin-bottom: 24px;
+                color: var(--text-primary);
+                font-weight: 500;
+            }
+
+            /* Features Section */
+            .features-container {
+                background: white;
+                border-radius: var(--border-radius);
+                padding: 32px;
+                box-shadow: var(--card-shadow);
+                margin-bottom: var(--gutter);
+            }
+
+            .feature-item {
+                border: 1px solid var(--border-color);
+                border-radius: var(--border-radius);
+                margin-bottom: 16px;
+                overflow: hidden;
+                transition: box-shadow var(--transition-speed);
+            }
+
+            .feature-item:hover {
+                box-shadow: var(--hover-shadow);
+            }
+
+            .feature-header {
+                padding: 16px 24px;
+                background: var(--light-bg);
+                cursor: pointer;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                transition: background var(--transition-speed);
+            }
+
+            .feature-header:hover {
+                background: #e8eaed;
+            }
+
+            .feature-scenarios {
+                max-height: 0;
+                overflow: hidden;
+                transition: max-height 0.5s ease-in-out;
+            }
+
+            .feature-scenarios.expanded {
+                max-height: 10000px;
+            }
+
+            .scenario-item {
+                border-top: 1px solid var(--border-color);
+                padding: 16px 24px;
+            }
+
+            .scenario-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                cursor: pointer;
+                padding: 12px;
+                border-radius: 6px;
+                transition: background var(--transition-speed);
+            }
+
+            .scenario-header:hover {
+                background: var(--light-bg);
+            }
+
+            .scenario-steps {
+                margin-top: 16px;
+                max-height: 0;
+                overflow: hidden;
+                transition: max-height 0.5s ease-in-out;
+            }
+
+            .scenario-steps.expanded {
+                max-height: 10000px;
+            }
+
+            .step-item {
+                padding: 12px 16px;
+                margin: 8px 0;
+                border-left: 3px solid var(--border-color);
+                background: var(--light-bg);
+                border-radius: 0 6px 6px 0;
+            }
+
+            .step-item.passed {
+                border-left-color: var(--success-color);
+            }
+
+            .step-item.failed {
+                border-left-color: var(--danger-color);
+                background: #fef7f7;
+            }
+
+            .step-item.skipped {
+                border-left-color: var(--warning-color);
+            }
+
+            .step-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                cursor: pointer;
+            }
+
+            .step-details {
+                max-height: 0;
+                overflow: hidden;
+                transition: max-height 0.3s ease-in-out;
+                margin-top: 12px;
+            }
+
+            .step-details.expanded {
+                max-height: 1000px;
+            }
+
+            /* Status Badges */
+            .status-badge {
+                display: inline-block;
+                padding: 4px 12px;
+                border-radius: 16px;
+                font-size: 0.75rem;
+                font-weight: 500;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-right: 8px;
+            }
+
+            .status-badge.passed {
+                background: #e6f4ea;
+                color: var(--success-color);
+            }
+
+            .status-badge.failed {
+                background: #fce8e6;
+                color: var(--danger-color);
+            }
+
+            .status-badge.skipped {
+                background: #fef7e0;
+                color: #f9ab00;
+            }
+
+            /* Progress Bar */
+            .progress-bar {
+                height: 8px;
+                background: var(--light-bg);
+                border-radius: 4px;
+                overflow: hidden;
+                margin: 16px 0;
+            }
+
+            .progress-bar-fill {
+                height: 100%;
+                display: flex;
+                transition: width var(--transition-speed);
+            }
+
+            .progress-segment {
+                height: 100%;
+            }
+
+            .progress-segment.passed {
+                background: var(--success-color);
+            }
+
+            .progress-segment.failed {
+                background: var(--danger-color);
+            }
+
+            .progress-segment.skipped {
+                background: var(--warning-color);
+            }
+
+            /* Artifacts Section */
+            .artifacts-container {
+                background: white;
+                border-radius: var(--border-radius);
+                padding: 32px;
+                box-shadow: var(--card-shadow);
+                margin-bottom: var(--gutter);
+            }
+
+            .artifact-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+                gap: 16px;
+                margin-top: 24px;
+            }
+
+            .artifact-item {
+                display: flex;
+                align-items: center;
+                padding: 12px;
+                background: var(--light-bg);
+                border-radius: 6px;
+                transition: background var(--transition-speed);
+                cursor: pointer;
+                text-decoration: none;
+                color: var(--text-primary);
+            }
+
+            .artifact-item:hover {
+                background: #e8eaed;
+            }
+
+            .artifact-item i {
+                margin-right: 12px;
+                font-size: 1.5rem;
+                color: var(--primary-color);
+            }
+
+            /* Performance Metrics */
+            .performance-container {
+                background: white;
+                border-radius: var(--border-radius);
+                padding: 32px;
+                box-shadow: var(--card-shadow);
+                margin-bottom: var(--gutter);
+            }
+
+            .metric-row {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 16px;
+                margin-top: 24px;
+            }
+
+            .metric-item {
+                text-align: center;
+                padding: 16px;
+                background: var(--light-bg);
+                border-radius: 6px;
+            }
+
+            .metric-value {
+                font-size: 2rem;
+                font-weight: 300;
+                color: var(--primary-color);
+            }
+
+            .metric-label {
+                font-size: 0.875rem;
+                color: var(--text-secondary);
+                margin-top: 8px;
+            }
+
+            /* Footer */
+            .footer {
+                background: white;
+                border-radius: var(--border-radius);
+                padding: 24px;
+                box-shadow: var(--card-shadow);
+                text-align: center;
+                color: var(--text-secondary);
+            }
+
+            .footer a {
+                color: var(--primary-color);
+                text-decoration: none;
+            }
+
+            .footer a:hover {
+                text-decoration: underline;
+            }
+
+            /* Responsive Design */
+            @media (max-width: 768px) {
+                .container {
+                    padding: 12px;
+                }
+
+                .header h1 {
+                    font-size: 1.875rem;
+                }
+
+                .summary-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .charts-container {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            /* Toggle Icon Animation */
+            .toggle-icon {
+                display: inline-block;
+                transition: transform var(--transition-speed);
+                margin-left: 8px;
+            }
+
+            .expanded .toggle-icon {
+                transform: rotate(90deg);
+            }
+
+            /* Error Details */
+            .error-details {
+                background: #fef7f7;
+                border: 1px solid #fad2cf;
+                border-radius: 6px;
+                padding: 16px;
+                margin-top: 12px;
+                font-family: 'Monaco', 'Courier New', monospace;
+                font-size: 0.875rem;
+                color: var(--danger-color);
+                white-space: pre-wrap;
+                word-break: break-all;
+            }
+
+            /* Screenshots */
+            .screenshot-container {
+                margin-top: 16px;
+                border-radius: 6px;
+                overflow: hidden;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            }
+
+            .screenshot-container img {
+                width: 100%;
+                height: auto;
+                display: block;
+            }
+
+            /* Loading Animation */
+            @keyframes pulse {
+                0% { opacity: 1; }
+                50% { opacity: 0.5; }
+                100% { opacity: 1; }
+            }
+
+            .loading {
+                animation: pulse 1.5s infinite;
+            }
+
+            /* Custom Scrollbar */
+            ::-webkit-scrollbar {
+                width: 8px;
+                height: 8px;
+            }
+
+            ::-webkit-scrollbar-track {
+                background: var(--light-bg);
+            }
+
+            ::-webkit-scrollbar-thumb {
+                background: var(--border-color);
+                border-radius: 4px;
+            }
+
+            ::-webkit-scrollbar-thumb:hover {
+                background: var(--text-secondary);
+            }
+
+            /* Tags */
+            .tags-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-top: 12px;
+            }
+
+            .tag {
+                display: inline-block;
+                padding: 4px 8px;
+                background: var(--light-bg);
+                border-radius: 4px;
+                font-size: 0.75rem;
+                color: var(--text-secondary);
+            }
+
+            .tag.highlight {
+                background: var(--primary-color);
+                color: white;
+            }
+
+            /* Timeline */
+            .timeline {
+                position: relative;
+                padding: 20px 0;
+            }
+
+            .timeline-item {
+                display: flex;
+                margin-bottom: 24px;
+                position: relative;
+            }
+
+            .timeline-item::before {
+                content: '';
+                position: absolute;
+                left: 20px;
+                top: 24px;
+                bottom: -24px;
+                width: 2px;
+                background: var(--border-color);
+            }
+
+            .timeline-item:last-child::before {
+                display: none;
+            }
+
+            .timeline-marker {
+                width: 40px;
+                height: 40px;
+                border-radius: 50%;
+                background: white;
+                border: 2px solid var(--primary-color);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                z-index: 1;
+            }
+
+            .timeline-content {
+                flex: 1;
+                margin-left: 24px;
+            }
+
+            /* Interactive Elements */
+            .interactive-hover {
+                transition: all var(--transition-speed);
+            }
+
+            .interactive-hover:hover {
+                transform: scale(1.02);
+            }
+
+            /* Print Styles */
+            @media print {
+                body {
+                    background: white;
+                }
+
+                .container {
+                    max-width: 100%;
+                }
+
+                .no-print {
+                    display: none;
+                }
+            }
+        </style>
+    `;
+
+    constructor() {
+        this.config = CSConfigurationManager.getInstance();
+    }
+
+    /**
+     * Generate a professional HTML report from test results
+     */
+    public static async generateReport(suite: TestSuite, outputPath: string): Promise<void> {
+        try {
+            const instance = new CSWorldClassReportGenerator_Enhanced();
+            const html = instance.generateHTML(suite);
+            const reportPath = path.resolve(outputPath, 'worldclass-report.html');
+
+            // Ensure output directory exists
+            const dir = path.dirname(reportPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+
+            // Write the report
+            fs.writeFileSync(reportPath, html, 'utf8');
+            CSReporter.info(`WorldClass Enhanced report generated: ${reportPath}`);
+
+        } catch (error: any) {
+            CSReporter.error(`Failed to generate WorldClass report: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Generate the complete HTML report
+     */
+    private generateHTML(suite: TestSuite): string {
+        const reportTitle = this.config.get('REPORT_TITLE', 'CS Framework Test Execution Report');
+        const now = new Date();
+
+        // Calculate statistics
+        const stats = this.calculateStatistics(suite);
+
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${reportTitle} - WorldClass Enhanced</title>
+    <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==">
+    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@300;400;500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    ${CSWorldClassReportGenerator_Enhanced.PROFESSIONAL_STYLES}
+</head>
+<body>
+    <div class="container">
+        ${this.generateHeader(suite, stats)}
+        ${this.generateSummaryCards(stats)}
+        ${this.generateChartsSection(stats)}
+        ${this.generatePerformanceMetrics(suite)}
+        ${this.generateFeaturesSection(suite)}
+        ${this.generateArtifactsSection(suite)}
+        ${this.generateEnvironmentSection(suite)}
+        ${this.generateFooter()}
+    </div>
+    ${this.generateScripts(suite)}
+</body>
+</html>`;
+    }
+
+    /**
+     * Calculate comprehensive statistics from test data
+     */
+    private calculateStatistics(suite: TestSuite): any {
+        const stats = {
+            totalFeatures: 1, // TestSuite represents one feature
+            totalScenarios: suite.totalScenarios || suite.scenarios.length,
+            totalSteps: 0,
+            passed: suite.passedScenarios || 0,
+            failed: suite.failedScenarios || 0,
+            skipped: suite.skippedScenarios || 0,
+            passRate: 0,
+            avgDuration: 0,
+            fastestScenario: null as any,
+            slowestScenario: null as any,
+            featureStats: new Map(),
+            tagStats: new Map(),
+            stepStats: {
+                passed: 0,
+                failed: 0,
+                skipped: 0
+            }
+        };
+
+        let totalDuration = 0;
+        let minDuration = Number.MAX_VALUE;
+        let maxDuration = 0;
+
+        // Group scenarios by feature (if available)
+        const featureGroups = new Map<string, TestScenario[]>();
+        suite.scenarios.forEach(scenario => {
+            const featureName = scenario.feature || suite.name;
+            if (!featureGroups.has(featureName)) {
+                featureGroups.set(featureName, []);
+            }
+            featureGroups.get(featureName)!.push(scenario);
+        });
+
+        // Analyze scenarios
+        featureGroups.forEach((scenarios, featureName) => {
+            const fStats = {
+                name: featureName,
+                passed: 0,
+                failed: 0,
+                skipped: 0,
+                duration: 0
+            };
+
+            scenarios.forEach(scenario => {
+                stats.totalSteps += scenario.steps.length;
+
+                if (scenario.status === 'passed') {
+                    stats.passed++;
+                    fStats.passed++;
+                } else if (scenario.status === 'failed') {
+                    stats.failed++;
+                    fStats.failed++;
+                } else {
+                    stats.skipped++;
+                    fStats.skipped++;
+                }
+
+                const duration = scenario.duration || 0;
+                totalDuration += duration;
+                fStats.duration += duration;
+
+                if (duration < minDuration && duration > 0) {
+                    minDuration = duration;
+                    stats.fastestScenario = scenario;
+                }
+                if (duration > maxDuration) {
+                    maxDuration = duration;
+                    stats.slowestScenario = scenario;
+                }
+
+                // Track tags
+                scenario.tags?.forEach(tag => {
+                    if (!tag.startsWith('@data-config:')) {
+                        stats.tagStats.set(tag, (stats.tagStats.get(tag) || 0) + 1);
+                    }
+                });
+
+                // Track step stats
+                scenario.steps.forEach(step => {
+                    if (step.status === 'passed') stats.stepStats.passed++;
+                    else if (step.status === 'failed') stats.stepStats.failed++;
+                    else stats.stepStats.skipped++;
+                });
+            });
+
+            stats.featureStats.set(featureName, fStats);
+        });
+
+        stats.passRate = stats.totalScenarios > 0
+            ? Math.round((stats.passed / stats.totalScenarios) * 100)
+            : 0;
+        stats.avgDuration = stats.totalScenarios > 0
+            ? Math.round(totalDuration / stats.totalScenarios)
+            : 0;
+
+        return stats;
+    }
+
+    /**
+     * Generate the header section
+     */
+    private generateHeader(suite: TestSuite, stats: any): string {
+        const envInfo = this.getEnvironmentInfo();
+
+        return `
+        <div class="header">
+            <h1><i class="fas fa-chart-line"></i> CS Framework Test Execution Report</h1>
+            <p style="color: var(--text-secondary); margin-bottom: 24px;">
+                WorldClass Enhanced Report - Comprehensive Test Analysis
+            </p>
+            <div class="metadata">
+                <div class="metadata-item">
+                    <i class="fas fa-calendar"></i>
+                    <span>${suite.startTime.toLocaleString()}</span>
+                </div>
+                <div class="metadata-item">
+                    <i class="fas fa-clock"></i>
+                    <span>Duration: ${this.formatDuration(suite.duration || 0)}</span>
+                </div>
+                <div class="metadata-item">
+                    <i class="fas fa-desktop"></i>
+                    <span>${envInfo.os.platform} - ${envInfo.os.release}</span>
+                </div>
+                <div class="metadata-item">
+                    <i class="fab fa-node-js"></i>
+                    <span>Node ${envInfo.runtime.node}</span>
+                </div>
+                <div class="metadata-item">
+                    <i class="fas fa-globe"></i>
+                    <span>${this.config.get('ENVIRONMENT', 'dev')}</span>
+                </div>
+                <div class="metadata-item">
+                    <i class="fas fa-percentage"></i>
+                    <span>Pass Rate: ${stats.passRate}%</span>
+                </div>
+            </div>
+            ${this.generateProgressBar(stats)}
+        </div>
+        `;
+    }
+
+    /**
+     * Get comprehensive environment information
+     */
+    private getEnvironmentInfo(): any {
+        const os = require('os');
+        return {
+            os: {
+                platform: os.platform(),
+                release: os.release(),
+                arch: os.arch(),
+                hostname: os.hostname(),
+                user: os.userInfo().username,
+                homeDir: os.homedir()
+            },
+            test: {
+                environment: this.config.get('ENVIRONMENT', 'dev'),
+                baseUrl: this.config.get('BASE_URL', 'N/A'),
+                apiBaseUrl: this.config.get('API_BASE_URL', 'N/A'),
+                browser: this.config.get('BROWSER', 'chromium'),
+                browserVersion: process.env.BROWSER_VERSION || 'Chromium 120+',
+                headless: this.config.getBoolean('HEADLESS', true) ? 'Yes' : 'No',
+                screenshotMode: this.config.get('SCREENSHOT_CAPTURE_MODE', 'on-failure'),
+                videoMode: this.config.get('BROWSER_VIDEO', 'off'),
+                parallel: this.config.getBoolean('PARALLEL', false) ? 'Yes' : 'No',
+                workers: this.config.getNumber('WORKERS', 1)
+            },
+            runtime: {
+                node: process.version,
+                npm: process.env.npm_version || 'N/A',
+                v8: process.versions.v8,
+                memory: {
+                    total: Math.round(os.totalmem() / (1024 * 1024 * 1024)) + ' GB',
+                    free: Math.round(os.freemem() / (1024 * 1024 * 1024)) + ' GB'
+                },
+                cpus: os.cpus().length
+            }
+        };
+    }
+
+    /**
+     * Generate progress bar
+     */
+    private generateProgressBar(stats: any): string {
+        const total = stats.totalScenarios;
+        const passedWidth = (stats.passed / total) * 100;
+        const failedWidth = (stats.failed / total) * 100;
+        const skippedWidth = (stats.skipped / total) * 100;
+
+        return `
+        <div class="progress-bar">
+            <div class="progress-bar-fill">
+                <div class="progress-segment passed" style="width: ${passedWidth}%"></div>
+                <div class="progress-segment failed" style="width: ${failedWidth}%"></div>
+                <div class="progress-segment skipped" style="width: ${skippedWidth}%"></div>
+            </div>
+        </div>
+        `;
+    }
+
+    /**
+     * Generate summary cards section
+     */
+    private generateSummaryCards(stats: any): string {
+        return `
+        <div class="summary-grid">
+            <div class="summary-card total">
+                <h3>Total Scenarios</h3>
+                <div class="value">${stats.totalScenarios}</div>
+                <div class="percentage">${stats.totalFeatures} Features</div>
+            </div>
+            <div class="summary-card passed">
+                <h3>Passed</h3>
+                <div class="value">${stats.passed}</div>
+                <div class="percentage">${stats.passRate}%</div>
+            </div>
+            <div class="summary-card failed">
+                <h3>Failed</h3>
+                <div class="value">${stats.failed}</div>
+                <div class="percentage">${stats.totalScenarios > 0 ? Math.round((stats.failed / stats.totalScenarios) * 100) : 0}%</div>
+            </div>
+            <div class="summary-card skipped">
+                <h3>Skipped</h3>
+                <div class="value">${stats.skipped}</div>
+                <div class="percentage">${stats.totalScenarios > 0 ? Math.round((stats.skipped / stats.totalScenarios) * 100) : 0}%</div>
+            </div>
+        </div>
+        `;
+    }
+
+    /**
+     * Generate charts section
+     */
+    private generateChartsSection(stats: any): string {
+        return `
+        <div class="charts-container">
+            <div class="chart-card">
+                <h3>Test Results Distribution</h3>
+                <canvas id="pieChart"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Feature Performance</h3>
+                <canvas id="barChart"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Execution Trend</h3>
+                <canvas id="lineChart"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Tag Distribution</h3>
+                <canvas id="tagChart"></canvas>
+            </div>
+        </div>
+        `;
+    }
+
+    /**
+     * Generate performance metrics section
+     */
+    private generatePerformanceMetrics(suite: TestSuite): string {
+        const stats = this.calculateStatistics(data);
+        const performanceMetrics = this.calculatePerformanceMetrics(data);
+
+        return `
+        <div class="performance-container">
+            <h2><i class="fas fa-tachometer-alt"></i> Performance Metrics</h2>
+            <div class="metric-row">
+                <div class="metric-item">
+                    <div class="metric-value">${this.formatDuration(stats.avgDuration)}</div>
+                    <div class="metric-label">Average Duration</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${performanceMetrics.fastest.length}</div>
+                    <div class="metric-label">Fast Tests (&lt; 5s)</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${performanceMetrics.slowest.length}</div>
+                    <div class="metric-label">Slow Tests (&gt; 30s)</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${stats.stepStats.passed}</div>
+                    <div class="metric-label">Steps Passed</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${stats.stepStats.failed}</div>
+                    <div class="metric-label">Steps Failed</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${stats.totalSteps}</div>
+                    <div class="metric-label">Total Steps</div>
+                </div>
+            </div>
+        </div>
+        `;
+    }
+
+    /**
+     * Calculate performance metrics
+     */
+    private calculatePerformanceMetrics(suite: TestSuite): any {
+        const metrics = {
+            fastest: [] as any[],
+            slowest: [] as any[],
+            avgByFeature: new Map()
+        };
+
+        // Group scenarios by feature
+        const featureGroups = new Map<string, TestScenario[]>();
+        suite.scenarios.forEach(scenario => {
+            const featureName = scenario.feature || suite.name;
+            if (!featureGroups.has(featureName)) {
+                featureGroups.set(featureName, []);
+            }
+            featureGroups.get(featureName)!.push(scenario);
+        });
+
+        featureGroups.forEach((scenarios, featureName) => {
+            let totalDuration = 0;
+            let count = 0;
+
+            scenarios.forEach(scenario => {
+                const duration = scenario.duration || 0;
+
+                if (duration < 5000) {
+                    metrics.fastest.push({ scenario: scenario.name, duration });
+                }
+                if (duration > 30000) {
+                    metrics.slowest.push({ scenario: scenario.name, duration });
+                }
+
+                totalDuration += duration;
+                count++;
+            });
+
+            if (count > 0) {
+                metrics.avgByFeature.set(featureName, totalDuration / count);
+            }
+        });
+
+        // Sort performance arrays
+        metrics.fastest.sort((a, b) => a.duration - b.duration);
+        metrics.slowest.sort((a, b) => b.duration - a.duration);
+
+        return metrics;
+    }
+
+    /**
+     * Generate features section with detailed scenarios and steps
+     */
+    private generateFeaturesSection(suite: TestSuite): string {
+        // Group scenarios by feature
+        const featureGroups = new Map<string, TestScenario[]>();
+        suite.scenarios.forEach(scenario => {
+            const featureName = scenario.feature || suite.name;
+            if (!featureGroups.has(featureName)) {
+                featureGroups.set(featureName, []);
+            }
+            featureGroups.get(featureName)!.push(scenario);
+        });
+
+        const features = Array.from(featureGroups.entries()).map(([featureName, featureScenarios]) => {
+            const feature = {
+                name: featureName,
+                scenarios: featureScenarios,
+                passed: featureScenarios.filter(s => s.status === 'passed').length,
+                failed: featureScenarios.filter(s => s.status === 'failed').length,
+                skipped: featureScenarios.filter(s => s.status === 'skipped').length,
+                duration: featureScenarios.reduce((sum, s) => sum + (s.duration || 0), 0)
+            };
+            const scenarios = feature.scenarios.map(scenario => `
+                <div class="scenario-item">
+                    <div class="scenario-header" onclick="toggleScenario(this)">
+                        <div>
+                            <span class="status-badge ${scenario.status}">${scenario.status}</span>
+                            <strong>${htmlEscape(scenario.name)}</strong>
+                            <span class="text-muted">(${scenario.steps.length} steps)</span>
+                        </div>
+                        <div>
+                            <span class="text-muted">${this.formatDuration(scenario.duration || 0)}</span>
+                            <span class="toggle-icon">▶</span>
+                        </div>
+                    </div>
+                    <div class="scenario-steps">
+                        ${(scenario as any).testData ? CSWorldClassReportGenerator_Enhanced.generateTestDataDisplay((scenario as any).testData) : ''}
+                        ${scenario.steps.map((step, index) => `
+                            <div class="step-item ${step.status}">
+                                <div class="step-header" onclick="toggleStep(this)">
+                                    <div>
+                                        <span class="status-badge ${step.status}">${step.status}</span>
+                                        <span>${htmlEscape(step.name)}</span>
+                                    </div>
+                                    <div>
+                                        <span class="text-muted">Duration: ${step.duration || 0}ms</span>
+                                        <span class="toggle-icon">▶</span>
+                                    </div>
+                                </div>
+                                <div class="step-details">
+                                    ${step.error ? `
+                                        <div class="error-details">
+                                            ${step.error}
+                                        </div>
+                                    ` : ''}
+                                    ${step.screenshot ? `
+                                        <div class="screenshot-container">
+                                            <img src="${step.screenshot}" alt="Step screenshot" loading="lazy">
+                                        </div>
+                                    ` : ''}
+                                    ${step.actions && step.actions.length > 0 ? this.generateActionsDisplay(step.actions) : ''}
+                                </div>
+                            </div>
+                        `).join('')}
+                        ${scenario.tags && scenario.tags.length > 0 ? `
+                            <div class="tags-container">
+                                ${scenario.tags.filter(tag => !tag.startsWith('@data-config:')).map(tag => `
+                                    <span class="tag">${tag}</span>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+
+            return `
+                <div class="feature-item">
+                    <div class="feature-header" onclick="toggleFeature(this)">
+                        <div>
+                            <strong>${feature.name}</strong>
+                            <span class="text-muted">(${feature.scenarios.length} scenarios)</span>
+                        </div>
+                        <div>
+                            <span class="status-badge passed">${feature.passed}</span>
+                            <span class="status-badge failed">${feature.failed}</span>
+                            <span class="status-badge skipped">${feature.skipped}</span>
+                            <span class="toggle-icon">▶</span>
+                        </div>
+                    </div>
+                    <div class="feature-scenarios">
+                        ${scenarios}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        return `
+        <div class="features-container">
+            <h2><i class="fas fa-list-check"></i> Feature Details</h2>
+            ${features}
+        </div>
+        `;
+    }
+
+    /**
+     * Generate actions display for a step
+     */
+    private generateActionsDisplay(actions: any[]): string {
+        const iconMap = {
+            click: '👆',
+            type: '⌨️',
+            navigate: '🌐',
+            wait: '⏰',
+            assert: '✅',
+            screenshot: '📸'
+        };
+
+        return `
+        <div style="margin-top: 12px; padding: 12px; background: #f0f4f8; border-radius: 6px;">
+            <div style="font-weight: bold; margin-bottom: 8px; color: #495057;">Actions Performed:</div>
+            ${actions.map(action => {
+                let icon = '🔸';
+                let actionType = '';
+
+                const actionName = action.name || action.action || '';
+                const lowerAction = actionName.toLowerCase();
+
+                if (lowerAction.includes('click')) {
+                    icon = iconMap.click;
+                } else if (lowerAction.includes('type') || lowerAction.includes('fill') || lowerAction.includes('enter')) {
+                    icon = iconMap.type;
+                } else if (lowerAction.includes('navigat') || lowerAction.includes('goto')) {
+                    icon = iconMap.navigate;
+                } else if (lowerAction.includes('wait')) {
+                    icon = iconMap.wait;
+                } else if (lowerAction.includes('assert') || lowerAction.includes('expect')) {
+                    // For assertions, check status first to determine the right icon
+                    icon = (action.status === 'failed' || action.status === 'fail') ? '❌' : '✅';
+                } else if (lowerAction.includes('screenshot')) {
+                    icon = iconMap.screenshot;
+                }
+
+                if (action.status === 'failed' || action.status === 'fail') {
+                    actionType = 'fail';
+                } else if (action.status === 'passed' || action.status === 'pass') {
+                    actionType = 'pass';
+                }
+
+                return `
+                <div style="display: flex; align-items: center; padding: 6px 0; ${actionType === 'fail' ? 'color: #ea4335;' : ''}">
+                    <span style="margin-right: 8px; font-size: 1.2em;">${icon}</span>
+                    <span style="flex: 1;">${actionName}</span>
+                    ${action.duration ? `<span style="color: #5f6368; font-size: 0.85em;">${action.duration}ms</span>` : ''}
+                </div>
+                `;
+            }).join('')}
+        </div>
+        `;
+    }
+
+    /**
+     * Generate artifacts section
+     */
+    private generateArtifactsSection(suite: TestSuite): string {
+        if (!data.artifacts) {
+            return '';
+        }
+
+        const artifacts = [];
+
+        if (data.artifacts.screenshots && data.artifacts.screenshots.length > 0) {
+            artifacts.push({
+                icon: 'fa-camera',
+                label: 'Screenshots',
+                count: data.artifacts.screenshots.length,
+                items: data.artifacts.screenshots
+            });
+        }
+
+        if (data.artifacts.videos && data.artifacts.videos.length > 0) {
+            artifacts.push({
+                icon: 'fa-video',
+                label: 'Videos',
+                count: data.artifacts.videos.length,
+                items: data.artifacts.videos
+            });
+        }
+
+        if (data.artifacts.logs && data.artifacts.logs.length > 0) {
+            artifacts.push({
+                icon: 'fa-file-lines',
+                label: 'Logs',
+                count: data.artifacts.logs.length,
+                items: data.artifacts.logs
+            });
+        }
+
+        if (data.artifacts.har && data.artifacts.har.length > 0) {
+            artifacts.push({
+                icon: 'fa-network-wired',
+                label: 'HAR Files',
+                count: data.artifacts.har.length,
+                items: data.artifacts.har
+            });
+        }
+
+        if (data.artifacts.traces && data.artifacts.traces.length > 0) {
+            artifacts.push({
+                icon: 'fa-route',
+                label: 'Traces',
+                count: data.artifacts.traces.length,
+                items: data.artifacts.traces
+            });
+        }
+
+        if (artifacts.length === 0) {
+            return '';
+        }
+
+        return `
+        <div class="artifacts-container">
+            <h2><i class="fas fa-folder-open"></i> Test Artifacts</h2>
+            <div class="artifact-grid">
+                ${artifacts.map(artifact => `
+                    <div class="artifact-item">
+                        <i class="fas ${artifact.icon}"></i>
+                        <div>
+                            <div style="font-weight: 500;">${artifact.label}</div>
+                            <div style="font-size: 0.875rem; color: var(--text-secondary);">${artifact.count} files</div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+        `;
+    }
+
+    /**
+     * Generate environment section
+     */
+    private generateEnvironmentSection(suite: TestSuite): string {
+        const envInfo = this.getEnvironmentInfo();
+
+        return `
+        <div class="artifacts-container">
+            <h2><i class="fas fa-cog"></i> Environment Details</h2>
+            <div class="metric-row">
+                <div class="metric-item">
+                    <div class="metric-value">${envInfo.test.browser}</div>
+                    <div class="metric-label">Browser</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${envInfo.test.headless}</div>
+                    <div class="metric-label">Headless Mode</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${envInfo.test.parallel}</div>
+                    <div class="metric-label">Parallel Execution</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${envInfo.test.workers}</div>
+                    <div class="metric-label">Workers</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${envInfo.runtime.cpus}</div>
+                    <div class="metric-label">CPU Cores</div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-value">${envInfo.runtime.memory.total}</div>
+                    <div class="metric-label">Total Memory</div>
+                </div>
+            </div>
+        </div>
+        `;
+    }
+
+    /**
+     * Generate footer section
+     */
+    private generateFooter(): string {
+        return `
+        <div class="footer">
+            <p>
+                Generated with ❤️ by <strong>CS Framework WorldClass Reporter Enhanced</strong>
+                <br>
+                <small>${new Date().toLocaleString()} |
+                <a href="https://github.com/codeautosmart/cs-framework" target="_blank">Documentation</a> |
+                Version ${this.config.get('FRAMEWORK_VERSION', '2.0.0')}</small>
+            </p>
+        </div>
+        `;
+    }
+
+    /**
+     * Generate JavaScript for interactive elements
+     */
+    private generateScripts(suite: TestSuite): string {
+        return `
+        <script>
+            // Toggle feature visibility
+            function toggleFeature(element) {
+                const feature = element.parentElement;
+                const scenarios = feature.querySelector('.feature-scenarios');
+                scenarios.classList.toggle('expanded');
+            }
+
+            // Toggle scenario visibility
+            function toggleScenario(element) {
+                const scenario = element.parentElement;
+                const steps = scenario.querySelector('.scenario-steps');
+                steps.classList.toggle('expanded');
+            }
+
+            // Toggle step details visibility
+            function toggleStep(element) {
+                const step = element.parentElement;
+                const details = step.querySelector('.step-details');
+                if (details) {
+                    details.classList.toggle('expanded');
+                }
+            }
+
+            // Toggle all columns in test data display
+            function toggleAllColumns(scenarioId) {
+                const allColumns = document.getElementById('all-columns-' + scenarioId);
+                const usedColumns = document.getElementById('used-columns-' + scenarioId);
+                const toggleBtn = document.getElementById('toggle-btn-' + scenarioId);
+
+                if (allColumns.style.display === 'none') {
+                    allColumns.style.display = 'block';
+                    usedColumns.style.display = 'none';
+                    toggleBtn.textContent = 'Show Used Only';
+                } else {
+                    allColumns.style.display = 'none';
+                    usedColumns.style.display = 'block';
+                    toggleBtn.textContent = 'Show All Columns';
+                }
+            }
+
+            // Initialize charts
+            document.addEventListener('DOMContentLoaded', function() {
+                // Pie chart
+                const pieCtx = document.getElementById('pieChart');
+                if (pieCtx) {
+                    new Chart(pieCtx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Passed', 'Failed', 'Skipped'],
+                            datasets: [{
+                                data: [${suite.passedScenarios || 0}, ${suite.failedScenarios || 0}, ${suite.skippedScenarios || 0}],
+                                backgroundColor: ['#34a853', '#ea4335', '#fbbc05']
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: true,
+                            plugins: {
+                                legend: {
+                                    position: 'bottom'
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Bar chart
+                const barCtx = document.getElementById('barChart');
+                if (barCtx) {
+                    // Group scenarios by feature for chart data
+                    const featureMap = new Map();
+                    ${JSON.stringify(suite.scenarios)}.forEach(scenario => {
+                        const featureName = scenario.feature || '${suite.name}';
+                        if (!featureMap.has(featureName)) {
+                            featureMap.set(featureName, { passed: 0, failed: 0 });
+                        }
+                        if (scenario.status === 'passed') featureMap.get(featureName).passed++;
+                        else if (scenario.status === 'failed') featureMap.get(featureName).failed++;
+                    });
+                    const featureNames = Array.from(featureMap.keys());
+                    const featurePassed = Array.from(featureMap.values()).map(f => f.passed);
+                    const featureFailed = Array.from(featureMap.values()).map(f => f.failed);
+
+                    new Chart(barCtx, {
+                        type: 'bar',
+                        data: {
+                            labels: featureNames,
+                            datasets: [
+                                {
+                                    label: 'Passed',
+                                    data: featurePassed,
+                                    backgroundColor: '#34a853'
+                                },
+                                {
+                                    label: 'Failed',
+                                    data: featureFailed,
+                                    backgroundColor: '#ea4335'
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: true,
+                            scales: {
+                                x: {
+                                    stacked: true
+                                },
+                                y: {
+                                    stacked: true
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Line chart (dummy data for trend)
+                const lineCtx = document.getElementById('lineChart');
+                if (lineCtx) {
+                    new Chart(lineCtx, {
+                        type: 'line',
+                        data: {
+                            labels: ['Run 1', 'Run 2', 'Run 3', 'Run 4', 'Run 5'],
+                            datasets: [{
+                                label: 'Pass Rate %',
+                                data: [85, 88, 92, 90, ${Math.round(((suite.passedScenarios || 0) / (suite.totalScenarios || 1)) * 100)}],
+                                borderColor: '#34a853',
+                                tension: 0.4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: true,
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    max: 100
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Tag chart
+                const tagCtx = document.getElementById('tagChart');
+                if (tagCtx && ${this.getTagData(data).labels.length} > 0) {
+                    new Chart(tagCtx, {
+                        type: 'bar',
+                        data: {
+                            labels: ${JSON.stringify(this.getTagData(data).labels)},
+                            datasets: [{
+                                label: 'Tag Usage',
+                                data: ${JSON.stringify(this.getTagData(data).values)},
+                                backgroundColor: '#4285f4'
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: true,
+                            indexAxis: 'y'
+                        }
+                    });
+                }
+            });
+
+            // Auto-expand failed scenarios
+            document.querySelectorAll('.scenario-item').forEach(item => {
+                const status = item.querySelector('.status-badge').textContent;
+                if (status === 'failed') {
+                    const steps = item.querySelector('.scenario-steps');
+                    steps.classList.add('expanded');
+                }
+            });
+        </script>
+        `;
+    }
+
+    /**
+     * Get tag data for chart
+     */
+    private getTagData(suite: TestSuite): { labels: string[], values: number[] } {
+        const tagMap = new Map();
+
+        suite.scenarios.forEach(scenario => {
+            scenario.tags?.filter(tag => !tag.startsWith('@data-config:')).forEach(tag => {
+                tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+            });
+        });
+
+        const sortedTags = Array.from(tagMap.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10);
+
+        return {
+            labels: sortedTags.map(t => t[0]),
+            values: sortedTags.map(t => t[1])
+        };
+    }
+
+    /**
+     * Format duration to human-readable format
+     */
+    private formatDuration(ms: number): string {
+        if (ms < 1000) return `${ms}ms`;
+        if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+
+        const minutes = Math.floor(ms / 60000);
+        const seconds = Math.floor((ms % 60000) / 1000);
+        return `${minutes}m ${seconds}s`;
+    }
+
+    private static generateTestDataDisplay(testData: any): string {
+        if (!testData) return '';
+
+        const td = testData;
+        const usedColumns = td.usedColumns || [];
+        const hasUnusedColumns = usedColumns.length < td.totalColumns;
+        const scenarioId = `scenario-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // Get indices of used columns
+        const usedIndices = usedColumns.map((col: string) => td.headers?.indexOf(col) || 0);
+
+        // Create filtered data for used columns only
+        const filteredHeaders = usedIndices.map((i: number) => td.headers?.[i] || '');
+        const filteredValues = usedIndices.map((i: number) => td.values?.[i] || '');
+
+        return `
+        <div class="test-data-container" style="padding: 10px 15px; background: #f8f9fa; border-left: 3px solid #6c757d; margin: 10px 15px 15px 15px; font-size: 0.9em; border-radius: 4px;">
+            <div style="font-weight: bold; color: #495057; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    📊 Test Data ${td.iterationNumber ? `(Iteration ${td.iterationNumber} of ${td.totalIterations})` : ''}
+                    ${td.source ? `
+                        <span style="font-weight: normal; font-size: 0.9em; color: #6c757d; margin-left: 10px;">
+                            ${td.source.type === 'csv' ?
+                                `📄 CSV: ${htmlEscape(td.source.file || 'inline')}${td.source.delimiter && td.source.delimiter !== ',' ? ` | Delimiter: "${htmlEscape(td.source.delimiter)}"` : ''}${td.source.filter ? ` | Filter: ${htmlEscape(td.source.filter)}` : ''}` :
+                              td.source.type === 'excel' || td.source.type === 'xlsx' ?
+                                `📗 Excel: ${htmlEscape(td.source.file || '')} | Sheet: ${htmlEscape(td.source.sheet || 'Sheet1')}${td.source.filter ? ` | Filter: ${htmlEscape(td.source.filter)}` : ''}` :
+                              td.source.type === 'json' ?
+                                `📋 JSON: ${htmlEscape(td.source.file || 'inline')}${td.source.filter ? ` | Filter: ${htmlEscape(td.source.filter)}` : ''}` :
+                              td.source.type === 'xml' ?
+                                `📰 XML: ${htmlEscape(td.source.file || 'inline')}${td.source.filter ? ` | Filter: ${htmlEscape(td.source.filter)}` : ''}` :
+                              td.source.type === 'database' || td.source.type === 'db' ?
+                                `🗄️ Database: ${htmlEscape(td.source.connection || 'default')}${td.source.query ? ` | Query: ${htmlEscape(td.source.query)}` : ''}${td.source.filter ? ` | Filter: ${htmlEscape(td.source.filter)}` : ''}` :
+                              '📝 Inline Examples'}
+                        </span>
+                    ` : ''}
+                </div>
+                <div style="font-size: 0.85em;">
+                    ${hasUnusedColumns && td.totalColumns ? `
+                        <span style="color: #007bff; margin-right: 10px;">
+                            ℹ️ Showing ${usedColumns.length} of ${td.totalColumns} columns
+                        </span>
+                        <button onclick="toggleAllColumns('${scenarioId}')" style="background: #007bff; color: white; border: none; padding: 3px 10px; border-radius: 3px; cursor: pointer; font-size: 0.85em;">
+                            <span id="toggle-btn-${scenarioId}">Show All Columns</span>
+                        </button>
+                    ` : td.totalColumns ? `
+                        <span style="color: #28a745;">
+                            ✓ All ${td.totalColumns} columns used
+                        </span>
+                    ` : ''}
+                </div>
+            </div>
+
+            ${td.headers && td.values ? `
+            <!-- Used columns table (always visible) -->
+            <div id="used-columns-${scenarioId}">
+                <table style="width: 100%; border-collapse: collapse; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                    <thead>
+                        <tr style="background: #e9ecef;">
+                            ${filteredHeaders.map((header: string) => `
+                                <th style="padding: 8px 12px; text-align: left; border: 1px solid #dee2e6; font-weight: 600; background: #d1f2eb;">${htmlEscape(header)} ✓</th>
+                            `).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="background: white;">
+                            ${filteredValues.map((value: string) => `
+                                <td style="padding: 8px 12px; border: 1px solid #dee2e6; font-family: monospace; font-size: 0.95em;">${htmlEscape(value)}</td>
+                            `).join('')}
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- All columns table (hidden by default) -->
+            ${hasUnusedColumns ? `
+            <div id="all-columns-${scenarioId}" style="display: none; margin-top: 10px;">
+                <div style="margin-bottom: 5px; font-size: 0.85em; color: #6c757d;">
+                    <strong>All Available Columns:</strong> (✓ = used in scenario, ✗ = unused)
+                </div>
+                <div style="max-height: 400px; overflow-x: auto; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 4px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead style="position: sticky; top: 0; background: white; z-index: 10;">
+                            <tr style="background: #e9ecef;">
+                                ${td.headers.map((header: string, idx: number) => {
+                                    const isUsed = usedColumns.includes(header);
+                                    return `
+                                        <th style="padding: 8px 12px; text-align: left; border: 1px solid #dee2e6; font-weight: 600;
+                                                   background: ${isUsed ? '#d1f2eb' : '#f8f9fa'};
+                                                   color: ${isUsed ? '#155724' : '#6c757d'};
+                                                   white-space: nowrap;">
+                                            ${htmlEscape(header)} ${isUsed ? '✓' : '✗'}
+                                        </th>
+                                    `;
+                                }).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr style="background: white;">
+                                ${td.values.map((value: string, idx: number) => {
+                                    const isUsed = usedColumns.includes(td.headers[idx]);
+                                    return `
+                                        <td style="padding: 8px 12px; border: 1px solid #dee2e6;
+                                                   font-family: monospace; font-size: 0.9em;
+                                                   background: ${isUsed ? '#f6ffed' : 'white'};
+                                                   color: ${isUsed ? '#000' : '#6c757d'};
+                                                   white-space: nowrap;">
+                                            ${htmlEscape(value || '-')}
+                                        </td>
+                                    `;
+                                }).join('')}
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            ` : ''}
+            ` : ''}
+        </div>
+        `;
+    }
+}

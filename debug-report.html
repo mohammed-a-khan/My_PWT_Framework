@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Report Issues</title>
+    <style>
+        .chart-container {
+            border: 2px solid red;
+            margin: 20px;
+            padding: 10px;
+        }
+        .chart-canvas {
+            border: 1px solid blue;
+            width: 100%;
+            height: 300px !important;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <h1>Debug Report Issues</h1>
+
+    <div class="chart-container">
+        <h2>Test Heatmap</h2>
+        <canvas id="heatmap-chart" class="chart-canvas"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>Test Tag Chart</h2>
+        <canvas id="tag-chart" class="chart-canvas"></canvas>
+    </div>
+
+    <div id="debug-output"></div>
+
+    <script>
+        const debugLog = (msg) => {
+            const output = document.getElementById('debug-output');
+            output.innerHTML += `<div>${msg}</div>`;
+            console.log(msg);
+        };
+
+        // Check if canvas elements exist
+        const heatmapCanvas = document.getElementById('heatmap-chart');
+        const tagCanvas = document.getElementById('tag-chart');
+
+        debugLog(`Heatmap canvas exists: ${!!heatmapCanvas}`);
+        debugLog(`Tag canvas exists: ${!!tagCanvas}`);
+
+        if (heatmapCanvas) {
+            debugLog(`Heatmap canvas dimensions: ${heatmapCanvas.width}x${heatmapCanvas.height}`);
+            debugLog(`Heatmap canvas client dimensions: ${heatmapCanvas.clientWidth}x${heatmapCanvas.clientHeight}`);
+
+            // Try to draw something simple
+            const ctx = heatmapCanvas.getContext('2d');
+            ctx.fillStyle = 'green';
+            ctx.fillRect(10, 10, 100, 100);
+            debugLog('Drew green rectangle on heatmap canvas');
+        }
+
+        // Test the actual chart initialization
+        debugLog('\n--- Testing Chart Initialization ---');
+
+        // Simulate the data
+        const scenarios = [
+            {status: 'passed'}, {status: 'failed'}, {status: 'passed'},
+            {status: 'failed'}, {status: 'passed'}, {status: 'passed'}
+        ];
+
+        const heatmapData = [];
+        const heatmapLabels = ['Suite 1', 'Suite 2'];
+
+        for (let i = 0; i < 10; i++) {
+            if (i < scenarios.length) {
+                const value = scenarios[i].status === 'passed' ? 85 : 25;
+                heatmapData.push(value);
+            } else {
+                heatmapData.push(0);
+            }
+        }
+
+        debugLog(`Heatmap data: ${JSON.stringify(heatmapData)}`);
+        debugLog(`Heatmap labels: ${JSON.stringify(heatmapLabels)}`);
+
+        // Check if the canvas is visible
+        if (heatmapCanvas) {
+            const rect = heatmapCanvas.getBoundingClientRect();
+            debugLog(`Canvas position: top=${rect.top}, left=${rect.left}, width=${rect.width}, height=${rect.height}`);
+            debugLog(`Canvas visible: ${rect.width > 0 && rect.height > 0}`);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "cs-test-automation-framework",
+  "version": "3.0.0",
+  "description": "CS Test Automation Framework - Lightning-fast, configurable, self-healing test automation",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "ts-node --transpile-only src/index.ts"
+  }
+}
