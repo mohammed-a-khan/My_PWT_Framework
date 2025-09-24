@@ -553,7 +553,8 @@ export class CSBDDRunner {
                     artifacts: result.artifacts,
                     workerId: result.workerId || 1,  // Add worker ID for timeline
                     startTime: result.startTime || new Date(),
-                    endTime: result.endTime || new Date()
+                    endTime: result.endTime || new Date(),
+                    testData: result.testData  // Add test data for data-driven scenarios
                 };
 
                 allScenarios.push(scenarioResult);
@@ -1178,7 +1179,11 @@ export class CSBDDRunner {
     public async executeSingleScenarioForWorker(
         scenario: ParsedScenario,
         feature: ParsedFeature,
-        options: RunOptions
+        options: RunOptions,
+        exampleRow?: string[],
+        exampleHeaders?: string[],
+        iterationNumber?: number,
+        totalIterations?: number
     ): Promise<any> {
         // Ensure feature has required properties
         if (!feature.tags) {
@@ -1192,8 +1197,8 @@ export class CSBDDRunner {
         this.featureContext.setCurrentFeature(feature.name);
         this.context.setCurrentFeature(feature.name);
 
-        // Execute the scenario using existing method
-        await this.executeSingleScenario(scenario, feature, options);
+        // Execute the scenario using existing method with data-driven parameters
+        await this.executeSingleScenario(scenario, feature, options, exampleRow, exampleHeaders, iterationNumber, totalIterations, scenario.examples);
 
         // Get full results from CSReporter (same as sequential execution)
         const reporterResults = CSReporter.getResults();
@@ -1211,6 +1216,16 @@ export class CSBDDRunner {
             duration: lastResult?.duration || 0,
             startTime: lastResult ? new Date(lastResult.timestamp) : new Date(),
             endTime: new Date(),
+            // Add test data for data-driven scenarios (same as sequential)
+            testData: exampleRow && exampleHeaders ? {
+                headers: exampleHeaders,
+                values: exampleRow,
+                iterationNumber: iterationNumber,
+                totalIterations: totalIterations,
+                source: this.getDataSourceInfo(scenario.examples),
+                usedColumns: this.getUsedColumns(scenario, exampleHeaders),
+                totalColumns: exampleHeaders.length
+            } : undefined,
             steps: lastResult ? lastResult.steps.map((step, index) => {
                 // Find matching step result for screenshot
                 const matchingStep = stepResults.find(sr => sr.step === step.name);

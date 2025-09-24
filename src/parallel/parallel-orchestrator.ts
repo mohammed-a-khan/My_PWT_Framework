@@ -6,15 +6,20 @@
 import { ChildProcess, fork } from 'child_process';
 import * as path from 'path';
 import * as os from 'os';
-import { ParsedFeature, ParsedScenario } from '../bdd/CSBDDEngine';
+import { ParsedFeature, ParsedScenario, ParsedExamples } from '../bdd/CSBDDEngine';
 import { CSReporter } from '../reporter/CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
+import { CSDataProvider } from '../data/CSDataProvider';
 
 interface WorkItem {
     id: string;
     feature: ParsedFeature;
     scenario: ParsedScenario;
     scenarioIndex: number;
+    exampleRow?: string[];
+    exampleHeaders?: string[];
+    iterationNumber?: number;
+    totalIterations?: number;
 }
 
 interface Worker {
@@ -43,8 +48,8 @@ export class ParallelOrchestrator {
     public async execute(features: ParsedFeature[]): Promise<Map<string, any>> {
         CSReporter.info(`Starting parallel execution with ${this.maxWorkers} workers`);
 
-        // Create work items
-        this.createWorkItems(features);
+        // Create work items (now async to handle data loading)
+        await this.createWorkItems(features);
         this.totalCount = this.workQueue.length;
         CSReporter.info(`Total scenarios to execute: ${this.totalCount}`);
 
@@ -65,25 +70,158 @@ export class ParallelOrchestrator {
         return this.results;
     }
 
-    private createWorkItems(features: ParsedFeature[]) {
+    /**
+     * Load external data for scenario examples
+     */
+    private async loadExamplesData(examples: ParsedExamples): Promise<ParsedExamples> {
+        // If no external data source, return as is
+        if (!examples.dataSource) {
+            return examples;
+        }
+
+        const dataProvider = CSDataProvider.getInstance();
+        const source = examples.dataSource;
+
+        try {
+            CSReporter.info(`Loading external data from ${source.type}: ${source.source}`);
+
+            // Build data provider options
+            const options: any = {
+                source: source.source,
+                type: source.type
+            };
+
+            // Add type-specific options
+            if (source.sheet) options.sheet = source.sheet;
+            if (source.delimiter) options.delimiter = source.delimiter;
+            if (source.filter) {
+                // Parse and apply filter expression
+                options.filter = this.createFilterFunction(source.filter);
+            }
+
+            // Load data
+            const data = await dataProvider.loadData(options);
+
+            if (data.length === 0) {
+                CSReporter.warn(`No data loaded from external source: ${source.source}`);
+                return examples;
+            }
+
+            // Extract headers and rows
+            const headers = Object.keys(data[0]);
+            const rows = data.map(item => headers.map(h => String(item[h] || '')));
+
+            CSReporter.info(`Loaded ${rows.length} rows with headers: ${headers.join(', ')}`);
+
+            return {
+                ...examples,
+                headers,
+                rows
+            };
+        } catch (error: any) {
+            CSReporter.error(`Failed to load external data: ${error.message}`);
+            // Return original examples as fallback
+            return examples;
+        }
+    }
+
+    /**
+     * Create a filter function from filter expression
+     */
+    private createFilterFunction(filterExpr: string): (row: any) => boolean {
+        // Simple filter implementation
+        // Format: "column=value" or "column!=value" or "column>value" etc.
+        const match = filterExpr.match(/^(\w+)\s*(=|!=|>|<|>=|<=)\s*(.+)$/);
+        if (!match) {
+            CSReporter.warn(`Invalid filter expression: ${filterExpr}`);
+            return () => true;
+        }
+
+        const [, column, operator, value] = match;
+        const cleanValue = value.replace(/^["']|["']$/g, ''); // Remove quotes
+
+        return (row: any) => {
+            const cellValue = String(row[column] || '');
+            switch (operator) {
+                case '=':
+                    return cellValue === cleanValue;
+                case '!=':
+                    return cellValue !== cleanValue;
+                case '>':
+                    return Number(cellValue) > Number(cleanValue);
+                case '<':
+                    return Number(cellValue) < Number(cleanValue);
+                case '>=':
+                    return Number(cellValue) >= Number(cleanValue);
+                case '<=':
+                    return Number(cellValue) <= Number(cleanValue);
+                default:
+                    return true;
+            }
+        };
+    }
+
+    private async createWorkItems(features: ParsedFeature[]) {
         let workId = 0;
 
         for (const feature of features) {
             for (let i = 0; i < feature.scenarios.length; i++) {
                 const scenario = feature.scenarios[i];
 
-                // Include background steps in the scenario
-                const scenarioWithBackground = {
-                    ...scenario,
-                    background: feature.background
-                };
+                // Check if scenario has examples (scenario outline)
+                if (scenario.examples) {
+                    // Load external data if configured
+                    const examples = await this.loadExamplesData(scenario.examples);
 
-                this.workQueue.push({
-                    id: `work-${++workId}`,
-                    feature,
-                    scenario: scenarioWithBackground as ParsedScenario,
-                    scenarioIndex: i
-                });
+                    if (examples.rows.length > 0) {
+                        // Create a work item for each example row
+                        let iterationNumber = 1;
+                        for (const row of examples.rows) {
+                            const scenarioWithBackground = {
+                                ...scenario,
+                                background: feature.background
+                            };
+
+                            this.workQueue.push({
+                                id: `work-${++workId}`,
+                                feature,
+                                scenario: scenarioWithBackground as ParsedScenario,
+                                scenarioIndex: i,
+                                exampleRow: row,
+                                exampleHeaders: examples.headers,
+                                iterationNumber,
+                                totalIterations: examples.rows.length
+                            });
+                            iterationNumber++;
+                        }
+                    } else {
+                        // No data rows, treat as regular scenario
+                        const scenarioWithBackground = {
+                            ...scenario,
+                            background: feature.background
+                        };
+
+                        this.workQueue.push({
+                            id: `work-${++workId}`,
+                            feature,
+                            scenario: scenarioWithBackground as ParsedScenario,
+                            scenarioIndex: i
+                        });
+                    }
+                } else {
+                    // Regular scenario (not a scenario outline)
+                    const scenarioWithBackground = {
+                        ...scenario,
+                        background: feature.background
+                    };
+
+                    this.workQueue.push({
+                        id: `work-${++workId}`,
+                        feature,
+                        scenario: scenarioWithBackground as ParsedScenario,
+                        scenarioIndex: i
+                    });
+                }
             }
         }
     }
@@ -212,7 +350,11 @@ export class ParallelOrchestrator {
             scenarioId: work.id,
             feature: work.feature,
             scenario: work.scenario,
-            config
+            config,
+            exampleRow: work.exampleRow,
+            exampleHeaders: work.exampleHeaders,
+            iterationNumber: work.iterationNumber,
+            totalIterations: work.totalIterations
         });
 
         CSReporter.debug(`Worker ${worker.id} assigned: ${work.scenario.name}`);

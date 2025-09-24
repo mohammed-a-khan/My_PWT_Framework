@@ -13,6 +13,10 @@ interface ExecuteMessage {
     feature: any;
     scenario: any;
     config: Record<string, any>;
+    exampleRow?: string[];
+    exampleHeaders?: string[];
+    iterationNumber?: number;
+    totalIterations?: number;
 }
 
 interface ResultMessage {
@@ -32,6 +36,7 @@ interface ResultMessage {
     tags?: string[];
     startTime?: Date;
     endTime?: Date;
+    testData?: any;  // Add test data for data-driven scenarios
 }
 
 class WorkerProcess {
@@ -118,10 +123,15 @@ class WorkerProcess {
 
             // Execute the scenario using the existing framework method
             // This will handle browser, context, steps, everything
+            // Pass data-driven test parameters if provided
             const scenarioResult = await this.bddRunner.executeSingleScenarioForWorker(
                 message.scenario,
                 message.feature,
-                { failFast: false }
+                { failFast: false },
+                message.exampleRow,
+                message.exampleHeaders,
+                message.iterationNumber,
+                message.totalIterations
             );
 
             // Map the result including all data from the scenario
@@ -131,6 +141,7 @@ class WorkerProcess {
             result.tags = scenarioResult.tags || [];  // Pass tags back
             result.startTime = scenarioResult.startTime;
             result.endTime = scenarioResult.endTime;
+            result.testData = scenarioResult.testData;  // Pass test data for data-driven scenarios
 
             // Capture any console logs
             const { CSParallelMediaHandler } = require('../parallel/CSParallelMediaHandler');
