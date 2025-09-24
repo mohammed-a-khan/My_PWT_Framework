@@ -68,6 +68,15 @@ export class CSExpect {
      */
     private async capturePreAssertionScreenshot(description: string): Promise<string | undefined> {
         try {
+            // Check if pre-assertion screenshots are enabled
+            const config = CSConfigurationManager.getInstance();
+            const preAssertionScreenshot = config.getBoolean('PRE_ASSERTION_SCREENSHOT', true);
+
+            if (!preAssertionScreenshot) {
+                CSReporter.debug('Pre-assertion screenshot disabled by configuration');
+                return undefined;
+            }
+
             const page = this.browserManager.getPage();
 
             // Check if page is valid
@@ -76,18 +85,26 @@ export class CSExpect {
                 return undefined;
             }
 
-            // Wait for page to be stable - based on Playwright best practices
+            // Wait for page to be stable - improved timing strategy
             try {
-                // Wait for load state
-                await page.waitForLoadState('load', { timeout: 2000 }).catch(() => {});
+                // First ensure the page has basic content loaded
+                await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
 
-                // Wait for body to be visible to ensure content is rendered
-                await page.waitForSelector('body', { state: 'visible', timeout: 1000 }).catch(() => {});
+                // Check if page has any visible content (not blank)
+                try {
+                    await page.waitForFunction(() => {
+                        const body = document.body;
+                        return body && body.innerText && body.innerText.trim().length > 0;
+                    }, { timeout: 2000 });
+                } catch {
+                    CSReporter.debug('Page appears to have no visible text content');
+                }
 
-                // Small delay for any final rendering
-                await page.waitForTimeout(200);
-            } catch {
-                CSReporter.debug('Page wait had issues but continuing with screenshot');
+                // Wait a moment for any error messages or dynamic content to appear
+                await page.waitForTimeout(1000);
+
+            } catch (error) {
+                CSReporter.debug(`Page stabilization had issues: ${error}`);
             }
 
             const dirs = this.resultsManager.getDirectories();
@@ -131,9 +148,16 @@ export class CSExpect {
     ): Promise<T> {
         this.assertionCount++;
 
-        // ALWAYS capture screenshot BEFORE trying the assertion to ensure we get the current state
-        // This is critical for scenarios where the page might change after assertion failure
-        const preScreenshot = await this.capturePreAssertionScreenshot(`pre-assertion-${description}`);
+        // Skip pre-assertion screenshot if explicitly disabled
+        const config = CSConfigurationManager.getInstance();
+        const capturePreScreenshot = config.getBoolean('CAPTURE_PRE_ASSERTION_SCREENSHOT', true);
+
+        let preScreenshot: string | undefined = undefined;
+        if (capturePreScreenshot) {
+            // ALWAYS capture screenshot BEFORE trying the assertion to ensure we get the current state
+            // This is critical for scenarios where the page might change after assertion failure
+            preScreenshot = await this.capturePreAssertionScreenshot(`pre-assertion-${description}`);
+        }
 
         try {
             // Try the assertion
