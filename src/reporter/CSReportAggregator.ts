@@ -144,7 +144,8 @@ export class CSReportAggregator {
                     duration: scenario.duration || 0,
                     startTime: scenario.startTime || new Date(),
                     endTime: scenario.endTime || new Date(),
-                    workerId: scenario.workerId || 1  // Add worker ID for timeline
+                    workerId: scenario.workerId || 1,  // Add worker ID for timeline
+                    testData: scenario.testData  // Add test data for data-driven scenarios
                 })),
                 startTime: new Date(Date.now() - totalDuration),
                 endTime: new Date(),

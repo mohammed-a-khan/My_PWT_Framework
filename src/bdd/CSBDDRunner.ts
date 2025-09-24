@@ -741,6 +741,11 @@ export class CSBDDRunner {
                 (scenario as any).videos = workerResult.videos;
             }
 
+            // Add test data for data-driven scenarios
+            if (workerResult.testData) {
+                (scenario as any).testData = workerResult.testData;
+            }
+
             testFeature.scenarios.push(scenario);
         });
 
@@ -1207,9 +1212,18 @@ export class CSBDDRunner {
         // Get step results from scenario context for screenshots
         const stepResults = this.scenarioContext.getStepResults();
 
+        // Interpolate scenario name with example data and add iteration number (same as sequential)
+        let scenarioName = scenario.name;
+        if (exampleRow && exampleHeaders) {
+            scenarioName = this.interpolateScenarioName(scenario.name, exampleRow, exampleHeaders);
+            if (iterationNumber && totalIterations && totalIterations > 1) {
+                scenarioName = `${scenarioName}_Iteration-${iterationNumber}`;
+            }
+        }
+
         // Build complete scenario data (same structure as sequential)
         const scenarioData = {
-            name: scenario.name,
+            name: scenarioName,
             feature: feature.name,
             tags: [...feature.tags, ...scenario.tags],
             status: this.currentScenario?.status || (lastResult?.status === 'pass' ? 'passed' : 'failed'),
