@@ -319,9 +319,10 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     // Get menu items for verification
     public async getMenuItems(): Promise<string[]> {
         try {
-            const menuElements = await this.navigationMenuItems.getAll();
+            // navigationMenuItems is already an array, no need to call getAll()
+            const menuElements = this.navigationMenuItems;
             const menuTexts: string[] = [];
-            
+
             for (const element of menuElements) {
                 const text = await element.textContent();
                 if (text) {

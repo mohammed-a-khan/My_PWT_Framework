@@ -344,8 +344,10 @@ export class CSBDDRunner {
             if (Array.isArray(features)) {
                 pathsToProcess = features;
             } else {
-                // Split by ';' to support multiple paths in a single string
-                pathsToProcess = features.split(';').map(p => p.trim()).filter(p => p.length > 0);
+                // Split by ';' or ',' to support multiple paths in a single string
+                // Support both semicolon and comma as delimiters
+                const delimiter = features.includes(';') ? ';' : ',';
+                pathsToProcess = features.split(delimiter).map(p => p.trim()).filter(p => p.length > 0);
             }
         }
         

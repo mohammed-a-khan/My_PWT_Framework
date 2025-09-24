@@ -1515,4 +1515,245 @@ export class CSElements {
             await element.uncheck();
         }
     }
+
+    // ============================================
+    // DYNAMIC ELEMENT CREATION METHODS
+    // ============================================
+
+    /**
+     * Create a CSWebElement dynamically with CSS selector
+     * @param selector CSS selector string
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createByCSS(selector: string, description?: string, page?: Page): CSWebElement {
+        return new CSWebElement({
+            css: selector,
+            description: description || `Dynamic element: ${selector}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement dynamically with XPath
+     * @param xpath XPath selector string
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createByXPath(xpath: string, description?: string, page?: Page): CSWebElement {
+        return new CSWebElement({
+            xpath: xpath,
+            description: description || `Dynamic XPath element`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement dynamically with text
+     * @param text Text to find
+     * @param exact Whether to match exactly
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createByText(text: string, exact: boolean = false, description?: string, page?: Page): CSWebElement {
+        const selector = exact ? `text="${text}"` : `text=${text}`;
+        return new CSWebElement({
+            text: text,
+            description: description || `Element with text: ${text}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement dynamically with ID
+     * @param id Element ID
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createById(id: string, description?: string, page?: Page): CSWebElement {
+        return new CSWebElement({
+            id: id,
+            description: description || `Element with ID: ${id}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement dynamically with name attribute
+     * @param name Element name attribute
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createByName(name: string, description?: string, page?: Page): CSWebElement {
+        return new CSWebElement({
+            name: name,
+            description: description || `Element with name: ${name}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement dynamically with role
+     * @param role ARIA role
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createByRole(role: string, description?: string, page?: Page): CSWebElement {
+        return new CSWebElement({
+            role: role,
+            description: description || `Element with role: ${role}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement dynamically with test ID
+     * @param testId Test ID attribute value
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createByTestId(testId: string, description?: string, page?: Page): CSWebElement {
+        return new CSWebElement({
+            testId: testId,
+            description: description || `Element with testId: ${testId}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement dynamically with custom options
+     * @param options Full ElementOptions object
+     * @param page Optional page instance
+     */
+    public static create(options: ElementOptions, page?: Page): CSWebElement {
+        return new CSWebElement(options, page);
+    }
+
+    /**
+     * Create a CSWebElement dynamically with interpolated selector
+     * @param template Selector template with placeholders
+     * @param values Values to interpolate
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     * @example CSWebElement.createWithTemplate('button[data-id="{id}"][data-action="{action}"]', {id: '123', action: 'submit'})
+     */
+    public static createWithTemplate(template: string, values: Record<string, string>, description?: string, page?: Page): CSWebElement {
+        let selector = template;
+        for (const [key, value] of Object.entries(values)) {
+            selector = selector.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
+        }
+
+        return new CSWebElement({
+            css: selector,
+            description: description || `Dynamic templated element: ${selector}`
+        }, page);
+    }
+
+    /**
+     * Create multiple CSWebElements dynamically matching a pattern
+     * @param selector CSS selector that matches multiple elements
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     * @returns Array of CSWebElement instances
+     */
+    public static async createMultiple(selector: string, description?: string, page?: Page): Promise<CSWebElement[]> {
+        const pageInstance = page || CSBrowserManager.getInstance().getPage();
+        const count = await pageInstance.locator(selector).count();
+        const elements: CSWebElement[] = [];
+
+        for (let i = 0; i < count; i++) {
+            elements.push(new CSWebElement({
+                css: `${selector}:nth-of-type(${i + 1})`,
+                description: `${description || 'Dynamic element'} [${i + 1}]`
+            }, page));
+        }
+
+        return elements;
+    }
+
+    /**
+     * Create a CSWebElement for a table cell dynamically
+     * @param tableSelector CSS selector for the table
+     * @param row Row number (1-indexed)
+     * @param column Column number (1-indexed)
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createTableCell(tableSelector: string, row: number, column: number, description?: string, page?: Page): CSWebElement {
+        const cellSelector = `${tableSelector} tbody tr:nth-child(${row}) td:nth-child(${column})`;
+        return new CSWebElement({
+            css: cellSelector,
+            description: description || `Table cell [${row}, ${column}]`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement for a form field by label
+     * @param labelText Label text
+     * @param fieldType Input type (input, select, textarea)
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createByLabel(labelText: string, fieldType: string = 'input', description?: string, page?: Page): CSWebElement {
+        const selector = `label:has-text("${labelText}") ~ ${fieldType}, label:has-text("${labelText}") ${fieldType}`;
+        return new CSWebElement({
+            css: selector,
+            description: description || `${fieldType} field with label: ${labelText}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement chain for nested elements
+     * @param selectors Array of selectors to chain
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createChained(selectors: string[], description?: string, page?: Page): CSWebElement {
+        const chainedSelector = selectors.join(' ');
+        return new CSWebElement({
+            css: chainedSelector,
+            description: description || `Chained element: ${chainedSelector}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement with filters
+     * @param baseSelector Base CSS selector
+     * @param filters Filter options (hasText, hasNotText, etc.)
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createWithFilter(baseSelector: string, filters: {
+        hasText?: string;
+        hasNotText?: string;
+        visible?: boolean;
+        enabled?: boolean;
+    }, description?: string, page?: Page): CSWebElement {
+        let selector = baseSelector;
+
+        if (filters.hasText) {
+            selector += `:has-text("${filters.hasText}")`;
+        }
+        if (filters.hasNotText) {
+            selector += `:not(:has-text("${filters.hasNotText}"))`;
+        }
+        if (filters.visible !== undefined) {
+            selector += filters.visible ? ':visible' : ':hidden';
+        }
+        if (filters.enabled !== undefined) {
+            selector += filters.enabled ? ':enabled' : ':disabled';
+        }
+
+        return new CSWebElement({
+            css: selector,
+            description: description || `Filtered element: ${selector}`
+        }, page);
+    }
+
+    /**
+     * Create a CSWebElement for nth match of a selector
+     * @param selector CSS selector
+     * @param index Index of the element (0-based)
+     * @param description Optional description for logging
+     * @param page Optional page instance
+     */
+    public static createNth(selector: string, index: number, description?: string, page?: Page): CSWebElement {
+        return new CSWebElement({
+            css: selector,
+            description: description || `${selector} [index: ${index}]`
+        }, page);
+    }
 }
