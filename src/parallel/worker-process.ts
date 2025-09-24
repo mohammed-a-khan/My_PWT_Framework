@@ -44,6 +44,7 @@ class WorkerProcess {
     private workerId: number;
     private bddRunner: any;
     private browserManager: any;
+    private scenarioCountForReuse: number = 0;
 
     constructor() {
         this.workerId = parseInt(process.env.WORKER_ID || '0');
@@ -159,14 +160,61 @@ class WorkerProcess {
             result.status = 'failed';
             result.error = error.message;
         } finally {
-            // Close browser with test status to handle video deletion
+            // Handle browser reuse or close based on configuration
             try {
                 if (this.browserManager) {
-                    // Pass the scenario result status to handle video deletion
-                    await this.browserManager.close(result.status);
-                    console.log(`[Worker ${this.workerId}] Browser closed with status: ${result.status}`);
+                    const { CSConfigurationManager } = require('../core/CSConfigurationManager');
+                    const configManager = CSConfigurationManager.getInstance();
+                    const browserReuseEnabled = configManager.getBoolean('BROWSER_REUSE_ENABLED', false);
+                    const clearStateOnReuse = configManager.getBoolean('BROWSER_REUSE_CLEAR_STATE', true);
+                    const closeAfterScenarios = configManager.getNumber('BROWSER_REUSE_CLOSE_AFTER_SCENARIOS', 0);
 
-                    // Browser will be re-initialized automatically on next use
+                    if (browserReuseEnabled) {
+                        // Track scenario count for periodic browser restart
+                        if (!this.scenarioCountForReuse) {
+                            this.scenarioCountForReuse = 0;
+                        }
+                        this.scenarioCountForReuse++;
+
+                        // Check if we should close browser after N scenarios
+                        const shouldCloseBrowser = closeAfterScenarios > 0 &&
+                                                 this.scenarioCountForReuse >= closeAfterScenarios;
+
+                        if (shouldCloseBrowser) {
+                            // Close and reset counter
+                            console.log(`[Worker ${this.workerId}] Closing browser after ${this.scenarioCountForReuse} scenarios`);
+                            await this.browserManager.close(result.status);
+                            this.scenarioCountForReuse = 0;
+                        } else {
+                            // Keep browser open but clear state if configured
+                            if (clearStateOnReuse) {
+                                try {
+                                    const context = this.browserManager.getContext();
+                                    if (context) {
+                                        // Clear cookies and local storage
+                                        await context.clearCookies();
+                                        await context.clearPermissions();
+
+                                        // Navigate to blank page to clear any page state
+                                        const page = this.browserManager.getPage();
+                                        if (page && !page.isClosed()) {
+                                            await page.goto('about:blank');
+                                        }
+
+                                        console.log(`[Worker ${this.workerId}] Browser state cleared for reuse`);
+                                    }
+                                } catch (e) {
+                                    console.debug(`[Worker ${this.workerId}] Failed to clear browser state: ${e}`);
+                                }
+                            } else {
+                                console.log(`[Worker ${this.workerId}] Browser kept open for reuse (state not cleared)`);
+                            }
+                        }
+                    } else {
+                        // Default behavior - close browser after each scenario
+                        await this.browserManager.close(result.status);
+                        console.log(`[Worker ${this.workerId}] Browser closed with status: ${result.status}`);
+                    }
                 }
             } catch (e) {
                 // Ignore cleanup errors

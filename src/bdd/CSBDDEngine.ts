@@ -621,7 +621,7 @@ export class CSBDDEngine {
         }
 
         const processedText = processedLines.join('\n');
-        CSReporter.debug(`Preprocessed Gherkin:\n${processedText}`);
+        // CSReporter.debug(`Preprocessed Gherkin:\n${processedText}`);
         return processedText;
     }
 

@@ -56,6 +56,7 @@ export class CSBDDRunner {
     private startTime: number = Date.now();
     private testResults: any = {};
     private parallelExecutionDone: boolean = false;
+    private scenarioCountForReuse: number = 0;
 
     private constructor() {
         this.bddEngine = CSBDDEngine.getInstance();
@@ -1607,20 +1608,68 @@ export class CSBDDRunner {
             // DISABLED: Scenario-level screenshots to avoid duplicates
             // Screenshots are now captured at step level only when failures occur
             // This prevents duplicate screenshots for the same failure
-            
-            // Close browser after each scenario with test status for artifact cleanup
-            try {
-                await this.browserManager.close(testStatus);
-                CSReporter.debug(`Browser closed after scenario (status: ${testStatus})`);
-            } catch (error) {
-                CSReporter.debug('Browser already closed or failed to close');
+
+            // Check if browser reuse is enabled
+            const browserReuseEnabled = this.config.getBoolean('BROWSER_REUSE_ENABLED', false);
+            const clearStateOnReuse = this.config.getBoolean('BROWSER_REUSE_CLEAR_STATE', true);
+            const closeAfterScenarios = this.config.getNumber('BROWSER_REUSE_CLOSE_AFTER_SCENARIOS', 0);
+
+            if (browserReuseEnabled) {
+                // Track scenario count for periodic browser restart
+                if (!this.scenarioCountForReuse) {
+                    this.scenarioCountForReuse = 0;
+                }
+                this.scenarioCountForReuse++;
+
+                // Check if we should close browser after N scenarios
+                const shouldCloseBrowser = closeAfterScenarios > 0 &&
+                                         this.scenarioCountForReuse >= closeAfterScenarios;
+
+                if (shouldCloseBrowser) {
+                    // Close and reset counter
+                    CSReporter.debug(`Closing browser after ${this.scenarioCountForReuse} scenarios (BROWSER_REUSE_CLOSE_AFTER_SCENARIOS=${closeAfterScenarios})`);
+                    await this.browserManager.close(testStatus);
+                    this.scenarioCountForReuse = 0;
+                } else {
+                    // Keep browser open but clear state if configured
+                    if (clearStateOnReuse) {
+                        try {
+                            const context = this.browserManager.getContext();
+                            if (context) {
+                                // Clear cookies and local storage
+                                await context.clearCookies();
+                                await context.clearPermissions();
+
+                                // Navigate to blank page to clear any page state
+                                const page = this.browserManager.getPage();
+                                if (page && !page.isClosed()) {
+                                    await page.goto('about:blank');
+                                }
+
+                                CSReporter.debug('Browser state cleared for reuse');
+                            }
+                        } catch (error) {
+                            CSReporter.debug(`Failed to clear browser state: ${error}`);
+                        }
+                    } else {
+                        CSReporter.debug('Browser kept open for reuse (state not cleared)');
+                    }
+                }
+            } else {
+                // Default behavior - close browser after each scenario
+                try {
+                    await this.browserManager.close(testStatus);
+                    CSReporter.debug(`Browser closed after scenario (status: ${testStatus})`);
+                } catch (error) {
+                    CSReporter.debug('Browser already closed or failed to close');
+                }
             }
-            
+
             // Upload results to ADO/TFS if enabled
             if (this.config.getBoolean('ADO_INTEGRATION_ENABLED', false)) {
                 await this.uploadResultsToADO();
             }
-            
+
         } catch (error) {
             CSReporter.debug(`Failed during scenario cleanup: ${error}`);
         }
