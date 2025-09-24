@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { Page } from '@playwright/test';
-import { CSPageBase } from './CSPageBase';
+import { CSBasePage } from './CSBasePage';
 import { CSWebElement } from '../element/CSWebElement';
 import { CSReporter } from '../reporter/CSReporter';
 
@@ -130,7 +130,7 @@ export interface CSElementOptions {
     breakpoint?: boolean;
 }
 
-export function CSElement(options: CSElementOptions) {
+export function CSGetElement(options: CSElementOptions) {
     return function(target: any, propertyKey: string | symbol | any, descriptor?: PropertyDescriptor): any {
         // Handle both old and new decorator API
         const actualPropertyKey = typeof propertyKey === 'string' ? propertyKey : propertyKey.name;
@@ -186,7 +186,7 @@ export function CSElement(options: CSElementOptions) {
                     if (options.scroll !== undefined) elementOptions.scroll = options.scroll;
                     if (options.force !== undefined) elementOptions.force = options.force;
                     
-                    // Get page from the current instance (this should be a CSPageBase instance)
+                    // Get page from the current instance (this should be a CSBasePage instance)
                     const currentPage = this.page || (this.browserManager && this.browserManager.getPage());
                     this._elements[actualPropertyKey] = new CSWebElement(elementOptions, currentPage);
                 }
@@ -206,7 +206,7 @@ export function CSElement(options: CSElementOptions) {
 }
 
 // Decorator for multiple elements
-export function CSElements(options: CSElementOptions) {
+export function CSGetElements(options: CSElementOptions) {
     return function(target: any, propertyKey: string | symbol | any, descriptor?: PropertyDescriptor): any {
         // Handle both old and new decorator API
         const actualPropertyKey = typeof propertyKey === 'string' ? propertyKey : propertyKey.name;
@@ -258,7 +258,7 @@ export function CSElements(options: CSElementOptions) {
 }
 
 // Decorator for element getter method
-export function CSGetElement(selector: string, options?: any) {
+export function CSGetElementMethod(selector: string, options?: any) {
     return function(target: any, propertyKey: string, descriptor: PropertyDescriptor) {
         descriptor.value = function() {
             return new CSWebElement({
@@ -309,7 +309,7 @@ export class CSPageFactory {
         CSReporter.debug(`Registered page: ${name}`);
     }
     
-    public static getPage<T extends CSPageBase>(pageClass: new() => T): T {
+    public static getPage<T extends CSBasePage>(pageClass: new() => T): T {
         const name = pageClass.name;
         
         // Return existing instance if available
@@ -327,7 +327,7 @@ export class CSPageFactory {
         return instance;
     }
     
-    public static createPage<T extends CSPageBase>(pageClass: new() => T): T {
+    public static createPage<T extends CSBasePage>(pageClass: new() => T): T {
         const instance = new pageClass();
         this.initializeDecoratedElements(instance);
         return instance;
@@ -384,3 +384,7 @@ export class CSPageFactory {
         return instance as T;
     }
 }
+
+// Backward compatibility - keep old names as aliases
+export const CSElement = CSGetElement;
+export const CSElements = CSGetElements;

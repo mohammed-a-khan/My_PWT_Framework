@@ -6,7 +6,7 @@ import { CSReporter } from './reporter/CSReporter';
 
 // Export all framework components for external use
 export * from './core/CSConfigurationManager';
-export * from './core/CSPageBase';
+export * from './core/CSBasePage';
 // export * from './core/CSPageFactory'; // Has conflict with CSElements
 export * from './browser/CSBrowserManager';
 export * from './browser/CSBrowserPool';

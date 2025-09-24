@@ -4,7 +4,7 @@ import { CSConfigurationManager } from './CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
 import { CSWebElement } from '../element/CSWebElement';
 
-export abstract class CSPageBase {
+export abstract class CSBasePage {
     protected page: Page;
     protected config: CSConfigurationManager;
     protected browserManager: CSBrowserManager;

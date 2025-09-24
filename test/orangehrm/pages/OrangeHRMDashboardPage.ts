@@ -1,13 +1,13 @@
-import { CSPageBase } from '../../../src/core/CSPageBase';
-import { CSPage, CSElement, CSElements } from '../../../src/core/CSPageFactory';
+import { CSBasePage } from '../../../src/core/CSBasePage';
+import { CSPage, CSGetElement, CSGetElements } from '../../../src/core/CSPageFactory';
 import { CSWebElement } from '../../../src/element/CSWebElement';
 import { CSReporter } from '../../../src/reporter/CSReporter';
 
 @CSPage('orangehrm-dashboard')
-export class OrangeHRMDashboardPage extends CSPageBase {
+export class OrangeHRMDashboardPage extends CSBasePage {
     
     // Dashboard header
-    @CSElement({
+    @CSGetElement({
         css: 'h6.oxd-topbar-header-breadcrumb-module',
         description: 'Dashboard page header',
         waitForVisible: true,
@@ -19,7 +19,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     public dashboardHeader!: CSWebElement;
     
     // Main navigation menu items collection
-    @CSElements({
+    @CSGetElements({
         css: '.oxd-main-menu-item',
         description: 'Navigation menu items',
         waitForVisible: true
@@ -27,7 +27,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     public navigationMenuItems!: CSWebElement[];
     
     // User profile dropdown
-    @CSElement({
+    @CSGetElement({
         css: '.oxd-userdropdown-tab',
         description: 'User profile dropdown',
         waitForVisible: true
@@ -35,7 +35,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     public userProfileDropdown!: CSWebElement;
     
     // Logout option
-    @CSElement({
+    @CSGetElement({
         text: 'Logout',
         description: 'Logout option',
         alternativeLocators: [
@@ -46,7 +46,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     public logoutOption!: CSWebElement;
     
     // Admin menu
-    @CSElement({
+    @CSGetElement({
         text: 'Admin',
         description: 'Admin menu',
         alternativeLocators: [
@@ -56,7 +56,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     })
     public adminMenuItem!: CSWebElement;
     
-    @CSElement({
+    @CSGetElement({
         text: 'PIM',
         description: 'PIM menu',
         alternativeLocators: [
@@ -65,7 +65,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     })
     public pimMenuItem!: CSWebElement;
     
-    @CSElement({
+    @CSGetElement({
         text: 'Leave',
         description: 'Leave menu',
         alternativeLocators: [
@@ -74,7 +74,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     })
     public leaveMenuItem!: CSWebElement;
     
-    @CSElement({
+    @CSGetElement({
         xpath: '//span[text()="Time"]',
         description: 'Time menu item',
         waitForVisible: true,
@@ -84,7 +84,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     })
     public timeMenuItem!: CSWebElement;
     
-    @CSElement({
+    @CSGetElement({
         xpath: '//span[text()="Recruitment"]',
         description: 'Recruitment menu item',
         waitForVisible: true,
@@ -94,7 +94,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     })
     public recruitmentMenuItem!: CSWebElement;
     
-    @CSElement({
+    @CSGetElement({
         xpath: '//span[text()="My Info"]',
         description: 'My Info menu item',
         waitForVisible: true,
@@ -104,7 +104,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     })
     public myInfoMenuItem!: CSWebElement;
     
-    @CSElement({
+    @CSGetElement({
         xpath: '//span[text()="Performance"]',
         description: 'Performance menu item',
         waitForVisible: true,
@@ -114,7 +114,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     })
     public performanceMenuItem!: CSWebElement;
     
-    @CSElement({
+    @CSGetElement({
         xpath: '//span[text()="Directory"]',
         description: 'Directory menu item',
         waitForVisible: true,
@@ -125,7 +125,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     public directoryMenuItem!: CSWebElement;
     
     // Dynamic page header for navigation verification
-    @CSElement({
+    @CSGetElement({
         css: '.oxd-topbar-header-breadcrumb-module',
         xpath: '//h6[contains(@class,"oxd-topbar-header-breadcrumb-module")]',
         description: 'Current page header for navigation verification',
@@ -135,7 +135,7 @@ export class OrangeHRMDashboardPage extends CSPageBase {
     public pageHeader!: CSWebElement;
 
     protected initializeElements(): void {
-        // Elements are automatically initialized by @CSElement decorators
+        // Elements are automatically initialized by @CSGetElement decorators
         CSReporter.debug('OrangeHRMDashboardPage elements initialized');
     }
 

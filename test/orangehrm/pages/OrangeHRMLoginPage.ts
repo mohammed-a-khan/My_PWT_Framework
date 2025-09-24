@@ -1,13 +1,13 @@
-import { CSPageBase } from '../../../src/core/CSPageBase';
-import { CSPage, CSElement } from '../../../src/core/CSPageFactory';
+import { CSBasePage } from '../../../src/core/CSBasePage';
+import { CSPage, CSGetElement } from '../../../src/core/CSPageFactory';
 import { CSWebElement } from '../../../src/element/CSWebElement';
 import { CSReporter } from '../../../src/reporter/CSReporter';
 
 @CSPage('orangehrm-login')
-export class OrangeHRMLoginPage extends CSPageBase {
+export class OrangeHRMLoginPage extends CSBasePage {
     
-    // Username field with CS Framework @CSElement decorator
-    @CSElement({
+    // Username field with CS Framework @CSGetElement decorator
+    @CSGetElement({
         css: 'input[name="username"]',
         description: 'Username input field',
         waitForVisible: true,
@@ -20,7 +20,7 @@ export class OrangeHRMLoginPage extends CSPageBase {
     public usernameField!: CSWebElement;
     
     // Password field
-    @CSElement({
+    @CSGetElement({
         css: 'input[name="password"]',
         description: 'Password input field',
         waitForVisible: true,
@@ -33,7 +33,7 @@ export class OrangeHRMLoginPage extends CSPageBase {
     public passwordField!: CSWebElement;
     
     // Login button
-    @CSElement({
+    @CSGetElement({
         css: 'button[type="submit"]',
         description: 'Login button',
         waitForVisible: true,
@@ -48,7 +48,7 @@ export class OrangeHRMLoginPage extends CSPageBase {
     public loginButton!: CSWebElement;
     
     // Error message element
-    @CSElement({
+    @CSGetElement({
         css: '.oxd-alert-content-text',
         description: 'Error message',
         alternativeLocators: [
@@ -58,7 +58,7 @@ export class OrangeHRMLoginPage extends CSPageBase {
     public errorMessage!: CSWebElement;
     
     // Dashboard header
-    @CSElement({
+    @CSGetElement({
         text: 'Dashboard',
         description: 'Dashboard header',
         waitForVisible: true,
@@ -70,7 +70,7 @@ export class OrangeHRMLoginPage extends CSPageBase {
     public dashboardHeader!: CSWebElement;
     
     // Navigation menu
-    @CSElement({
+    @CSGetElement({
         css: '.oxd-main-menu',
         description: 'Navigation menu',
         waitForVisible: true
