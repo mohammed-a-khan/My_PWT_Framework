@@ -313,7 +313,7 @@ export class ParallelOrchestrator {
             const work = worker.currentWork;
 
             this.results.set(work.id, {
-                scenarioName: work.scenario.name,
+                scenarioName: result.name || work.scenario.name,  // Use the interpolated name from worker if available
                 featureName: work.feature.name,
                 workerId: worker.id,  // Add worker ID for timeline
                 ...result

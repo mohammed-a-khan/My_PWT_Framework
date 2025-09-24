@@ -22,6 +22,7 @@ interface ExecuteMessage {
 interface ResultMessage {
     type: 'result';
     scenarioId: string;
+    name?: string;  // Add scenario name (interpolated with iteration)
     status: 'passed' | 'failed' | 'skipped';
     duration: number;
     error?: string;
@@ -135,6 +136,7 @@ class WorkerProcess {
             );
 
             // Map the result including all data from the scenario
+            result.name = scenarioResult.name;  // Pass the interpolated scenario name
             result.status = scenarioResult.status;
             result.steps = scenarioResult.steps;
             result.artifacts = scenarioResult.artifacts || { screenshots: [], videos: [] };

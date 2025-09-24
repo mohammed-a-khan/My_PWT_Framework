@@ -1258,7 +1258,7 @@ export class CSBDDRunner {
                     })),
                     actions: step.actions.map(action => ({
                         name: action.action,
-                        status: action.status === 'pass' ? 'passed' : 'failed',
+                        status: action.status === 'pass' ? 'passed' : action.status === 'fail' ? 'failed' : 'skipped',
                         duration: action.duration,
                         timestamp: new Date(action.timestamp)
                     })),
