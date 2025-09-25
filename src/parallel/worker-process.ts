@@ -211,6 +211,9 @@ class WorkerProcess {
                             } else {
                                 console.log(`[Worker ${this.workerId}] Browser kept open for reuse (state not cleared)`);
                             }
+
+                            // Restart trace recording for the next scenario (after state is cleared)
+                            await (this.browserManager as any).restartTraceForNextScenario?.();
                         }
                     } else {
                         // Default behavior - close browser after each scenario

@@ -53,23 +53,12 @@ Before({ timeout: 30000 }, async function(scenario) {
         CSReporter.info(`Starting scenario: ${scenarioName}`);
         CSReporter.debug(`Tags: ${tags}`);
         
-        // Initialize browser based on strategy
+        // Initialize browser based on reuse configuration
         const browserManager = CSBrowserManager.getInstance();
-        const strategy = config.get('BROWSER_INSTANCE_STRATEGY', 'new-per-scenario');
-        
-        if (strategy === 'new-per-scenario') {
+        const browserReuseEnabled = config.getBoolean('BROWSER_REUSE_ENABLED', false);
+
+        if (!browserReuseEnabled || !browserManager.getBrowser()) {
             await browserManager.launch();
-        } else if (strategy === 'new-context-per-scenario') {
-            if (!browserManager.getBrowser()) {
-                await browserManager.launch();
-            } else {
-                await browserManager.closeContext();
-                await browserManager.closePage();
-            }
-        } else if (strategy === 'reuse-across-scenarios') {
-            if (!browserManager.getBrowser()) {
-                await browserManager.launch();
-            }
         }
         
         // Start evidence collection
@@ -153,17 +142,14 @@ After({ timeout: 30000 }, async function(scenario) {
             await dbManager.rollbackTransaction(scenario.pickle.id);
         }
         
-        // Handle browser based on strategy
+        // Handle browser based on reuse configuration
         const browserManager = CSBrowserManager.getInstance();
-        const strategy = config.get('BROWSER_INSTANCE_STRATEGY', 'new-per-scenario');
-        
-        if (strategy === 'new-per-scenario') {
+        const browserReuseEnabled = config.getBoolean('BROWSER_REUSE_ENABLED', false);
+
+        if (!browserReuseEnabled) {
             await browserManager.close();
-        } else if (strategy === 'new-context-per-scenario') {
-            await browserManager.closeContext();
-            await browserManager.closePage();
         }
-        // For 'reuse-across-scenarios', keep browser open
+        // For browser reuse, keep browser open
         
         // Update dashboard
         const dashboard = CSLiveDashboard.getInstance();

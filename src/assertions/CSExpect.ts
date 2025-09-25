@@ -150,7 +150,7 @@ export class CSExpect {
 
         // Skip pre-assertion screenshot if explicitly disabled
         const config = CSConfigurationManager.getInstance();
-        const capturePreScreenshot = config.getBoolean('CAPTURE_PRE_ASSERTION_SCREENSHOT', true);
+        const capturePreScreenshot = config.getBoolean('PRE_ASSERTION_SCREENSHOT', true);
 
         let preScreenshot: string | undefined = undefined;
         if (capturePreScreenshot) {

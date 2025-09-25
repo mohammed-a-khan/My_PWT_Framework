@@ -34,47 +34,49 @@ export class CSConfigurationManager {
 
     public async initialize(args: any = {}): Promise<void> {
         const startTime = Date.now();
-        
+
         // Determine project and environment early
         const project = args.project || process.env.PROJECT || 'common';
         const environment = args.env || args.environment || process.env.ENVIRONMENT || 'dev';
-        
+
         // 7-LEVEL CONFIGURATION HIERARCHY (loaded in reverse priority order)
-        
+
         // Level 7 (Lowest Priority): Global defaults
         await this.loadConfig('config/global.env', 'Global defaults');
-        
-        // Level 6: Common configuration
+
+        // Level 6: Common configuration - load all .env files from common folder
         await this.loadConfig('config/common/common.env', 'Common config');
-        
+        await this.loadAllEnvFilesFromDirectory('config/common', 'Common configs');
+
         // Level 5: Common environment specific
         await this.loadConfig(`config/common/environments/${environment}.env`, 'Common environment');
-        
-        // Level 4: Project common configuration
+
+        // Level 4: Project common configuration - load all .env files from project common folder
         await this.loadConfig(`config/${project}/common/common.env`, 'Project common');
-        
+        await this.loadAllEnvFilesFromDirectory(`config/${project}/common`, 'Project common configs');
+
         // Level 3: Project environment specific (Highest file priority)
         await this.loadConfig(`config/${project}/environments/${environment}.env`, 'Project environment');
-        
-        // Also try to load project-specific config.json if it exists
-        await this.loadConfig(`config/${project}.env`, 'Project config');
-        
+
+        // Also load all .env files from project root directory
+        await this.loadAllEnvFilesFromDirectory(`config/${project}`, 'Project configs', true);
+
         // Level 2: Environment variables (override all files)
         this.loadEnvironmentVariables();
-        
+
         // Level 1 (Highest Priority): Command line arguments (override everything)
         this.loadCommandLineArgs(args);
-        
+
         // Set computed values
         this.config.set('PROJECT', project);
         this.config.set('ENVIRONMENT', environment);
-        
+
         // Perform advanced interpolation
         this.performAdvancedInterpolation();
-        
+
         // Decrypt encrypted values
         this.decryptValues();
-        
+
         const loadTime = Date.now() - startTime;
         if (loadTime > 100) {
             console.warn(`⚠️ Configuration loading took ${loadTime}ms (target: <100ms)`);
@@ -83,7 +85,7 @@ export class CSConfigurationManager {
 
     private async loadConfig(filePath: string, description: string): Promise<void> {
         const fullPath = path.join(process.cwd(), filePath);
-        
+
         // Only load .env files (no JSON support)
         if (fs.existsSync(fullPath)) {
             const config = dotenv.parse(fs.readFileSync(fullPath));
@@ -91,6 +93,42 @@ export class CSConfigurationManager {
                 this.config.set(key, value);
             });
             CSReporter.debug(`✓ Loaded ENV ${description}: ${filePath}`);
+        }
+    }
+
+    private async loadAllEnvFilesFromDirectory(dirPath: string, description: string, excludeSubdirs: boolean = false): Promise<void> {
+        const fullPath = path.join(process.cwd(), dirPath);
+
+        if (!fs.existsSync(fullPath)) {
+            return;
+        }
+
+        try {
+            const files = fs.readdirSync(fullPath);
+            const envFiles = files.filter(file => {
+                const filePath = path.join(fullPath, file);
+                const stat = fs.statSync(filePath);
+
+                // Skip subdirectories if excludeSubdirs is true
+                if (stat.isDirectory()) {
+                    if (excludeSubdirs && (file === 'common' || file === 'environments')) {
+                        return false;
+                    }
+                    return false;
+                }
+
+                // Load only .env files, but skip common.env as it's already loaded
+                return file.endsWith('.env') && file !== 'common.env';
+            });
+
+            // Sort files for consistent loading order
+            envFiles.sort();
+
+            for (const file of envFiles) {
+                await this.loadConfig(path.join(dirPath, file), `${description} - ${file}`);
+            }
+        } catch (error) {
+            CSReporter.debug(`Could not load additional env files from ${dirPath}: ${error}`);
         }
     }
 

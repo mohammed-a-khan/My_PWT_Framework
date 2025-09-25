@@ -77,7 +77,7 @@ export class CSDatabaseClient {
             };
             
             this.queryTimeout = this.config.getNumber('DB_QUERY_TIMEOUT', 10000);
-            this.retryCount = this.config.getNumber('DB_RETRY_COUNT', 3);
+            this.retryCount = this.config.getNumber('DB_MAX_RETRIES', 3);
             this.retryDelay = this.config.getNumber('DB_RETRY_DELAY', 1000);
             
             CSReporter.debug(`Database configuration loaded: ${dbConfig.type}`);

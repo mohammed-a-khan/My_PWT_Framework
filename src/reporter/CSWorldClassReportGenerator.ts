@@ -286,7 +286,7 @@ export class CSWorldClassReportGenerator {
                 timeout: this.config.get('TIMEOUT', '30000'),
                 retryCount: this.config.get('RETRY_COUNT', '2'),
                 screenshotOnFailure: this.config.get('SCREENSHOT_ON_FAILURE', 'true'),
-                videoCapture: this.config.get('VIDEO_CAPTURE_MODE', 'on-failure'),
+                videoCapture: this.config.get('BROWSER_VIDEO', 'off'),
                 harCapture: this.config.get('HAR_CAPTURE_MODE', 'always')
             }
         };

@@ -64,26 +64,23 @@ export class CSBrowserManager {
         const startTime = Date.now();
         
         if (!browserType) {
-            browserType = this.config.get('BROWSER', this.config.get('DEFAULT_BROWSER', 'chrome'));
+            browserType = this.config.get('BROWSER', 'chrome');
         }
         
         this.currentBrowserType = browserType;
         
         try {
-            // Get browser instance based on strategy
-            const strategy = this.config.get('BROWSER_INSTANCE_STRATEGY', 'new-per-scenario');
+            // Get browser instance based on reuse configuration
+            const browserReuseEnabled = this.config.getBoolean('BROWSER_REUSE_ENABLED', false);
 
-            if (strategy === 'reuse-across-scenarios' && this.browserPool.has(browserType)) {
-                this.browser = this.browserPool.get(browserType)!;
-                CSReporter.debug('Reusing browser from pool');
-            } else if (this.browser && strategy === 'new-per-scenario') {
-                // For new-per-scenario, reuse the browser but create new context
-                CSReporter.debug('Reusing browser for new-per-scenario strategy');
+            if (browserReuseEnabled && this.browser) {
+                // Reuse existing browser
+                CSReporter.debug('Reusing existing browser');
             } else {
                 CSReporter.debug('Launching new browser');
                 this.browser = await this.launchBrowser(browserType);
 
-                if (strategy === 'reuse-across-scenarios') {
+                if (browserReuseEnabled) {
                     this.browserPool.set(browserType, this.browser);
                 }
             }
@@ -114,7 +111,7 @@ export class CSBrowserManager {
     }
 
     private async launchBrowser(browserType: string): Promise<Browser> {
-        const isHeadless = this.config.getBoolean('HEADLESS', this.config.getBoolean('DEFAULT_HEADLESS', false));
+        const isHeadless = this.config.getBoolean('HEADLESS', false);
         
         const browserOptions: any = {
             headless: isHeadless,
@@ -165,7 +162,7 @@ export class CSBrowserManager {
         const args = [];
         
         // Always maximize in non-headless mode
-        const isHeadless = this.config.getBoolean('HEADLESS', this.config.getBoolean('DEFAULT_HEADLESS', false));
+        const isHeadless = this.config.getBoolean('HEADLESS', false);
         if (!isHeadless) {
             args.push('--start-maximized');
         }
@@ -208,7 +205,7 @@ export class CSBrowserManager {
             throw new Error('Browser not launched');
         }
 
-        const isHeadless = this.config.getBoolean('HEADLESS', this.config.getBoolean('DEFAULT_HEADLESS', false));
+        const isHeadless = this.config.getBoolean('HEADLESS', false);
         
         const contextOptions: any = {
             viewport: isHeadless ? {
@@ -225,22 +222,8 @@ export class CSBrowserManager {
             forcedColors: this.config.get('BROWSER_FORCED_COLORS', 'none') as any,
         };
 
-        // Add recording options if enabled (support both old and new config keys)
-        const videoCaptureMode = this.config.get('VIDEO_CAPTURE_MODE');
-        const browserVideo = this.config.get('BROWSER_VIDEO', 'retain-on-failure');
-
-        // Support backward compatibility: VIDEO_CAPTURE_MODE takes precedence if set
-        let videoMode = browserVideo;
-        if (videoCaptureMode) {
-            // Map old VIDEO_CAPTURE_MODE values to new BROWSER_VIDEO values
-            if (videoCaptureMode === 'never') {
-                videoMode = 'off';
-            } else if (videoCaptureMode === 'always') {
-                videoMode = 'on';
-            } else if (videoCaptureMode === 'on-failure') {
-                videoMode = 'retain-on-failure';
-            }
-        }
+        // Add recording options if enabled
+        const videoMode = this.config.get('BROWSER_VIDEO', 'off');
 
         // Use parallel resource manager if in parallel mode, otherwise use test results manager
         const isParallel = this.config.getBoolean('USE_WORKER_THREADS', false) && this.isWorkerThread;
@@ -546,8 +529,24 @@ export class CSBrowserManager {
                 CSReporter.info(`Trace saved (capture mode: ${traceCaptureMode}, test ${testStatus}): ${tracePath}`);
             }
 
-            // Restart tracing for next scenario if browser is being reused
-            if (this.config.getBoolean('BROWSER_REUSE_ENABLED', false)) {
+            // Don't restart trace here - it should be restarted in restartTraceForNextScenario()
+            // This prevents timing issues where trace might be restarted too early
+        } catch (error) {
+            CSReporter.debug(`Failed to save/restart trace: ${error}`);
+        }
+    }
+
+    public async restartTraceForNextScenario(): Promise<void> {
+        if (!this.context || !this.config.getBoolean('BROWSER_REUSE_ENABLED', false)) {
+            return;
+        }
+
+        try {
+            // Only restart trace if it's enabled
+            const traceEnabled = this.config.getBoolean('BROWSER_TRACE_ENABLED', false) ||
+                                this.config.get('TRACE_CAPTURE_MODE', 'never') !== 'never';
+
+            if (traceEnabled) {
                 await this.context.tracing.start({
                     screenshots: true,
                     snapshots: true,
@@ -557,7 +556,7 @@ export class CSBrowserManager {
                 CSReporter.debug('Trace recording restarted for next scenario');
             }
         } catch (error) {
-            CSReporter.debug(`Failed to save/restart trace: ${error}`);
+            CSReporter.debug(`Failed to restart trace: ${error}`);
         }
     }
 
@@ -649,7 +648,7 @@ export class CSBrowserManager {
         }
 
         // Handle video recording
-        const videoCaptureMode = this.config.get('VIDEO_CAPTURE_MODE', this.config.get('BROWSER_VIDEO', 'never')).toLowerCase();
+        const videoCaptureMode = this.config.get('BROWSER_VIDEO', 'off').toLowerCase();
         if (videoCaptureMode !== 'never' && videoCaptureMode !== 'off' && this.page) {
             try {
                 const video = this.page.video();
@@ -747,8 +746,8 @@ export class CSBrowserManager {
         // Reset paths for next test
         this.currentHarPath = null;
 
-        const strategy = this.config.get('BROWSER_INSTANCE_STRATEGY', 'new-per-scenario');
-        if (strategy !== 'reuse-across-scenarios') {
+        const browserReuseEnabled = this.config.getBoolean('BROWSER_REUSE_ENABLED', false);
+        if (!browserReuseEnabled) {
             await this.closeBrowser();
         }
     }

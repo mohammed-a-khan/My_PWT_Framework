@@ -76,11 +76,11 @@ export class CSHTMLReporter {
             workers: this.config.getNumber('PARALLEL_WORKERS'),
             headless: this.config.getBoolean('HEADLESS'),
             slowMo: this.config.getNumber('BROWSER_SLOWMO'),
-            timeout: this.config.getNumber('DEFAULT_TIMEOUT'),
+            timeout: this.config.getNumber('TIMEOUT', 30000),
             retryCount: this.config.getNumber('RETRY_COUNT'),
-            videoCapture: this.config.getBoolean('VIDEO_CAPTURE'),
-            screenshotOnFail: this.config.getBoolean('SCREENSHOT_ON_FAIL'),
-            traceEnabled: this.config.getBoolean('TRACE_ENABLED')
+            videoCapture: this.config.get('BROWSER_VIDEO') !== 'off',
+            screenshotOnFail: this.config.getBoolean('SCREENSHOT_ON_FAILURE', true),
+            traceEnabled: this.config.getBoolean('BROWSER_TRACE_ENABLED', false)
         };
     }
 

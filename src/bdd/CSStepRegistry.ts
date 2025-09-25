@@ -91,14 +91,12 @@ export class CSStepRegistry {
     }
 
     private setDefaultTimeouts(): void {
-        const defaultTimeout = this.config.getNumber('DEFAULT_TIMEOUT', 30000);
-        const stepTimeout = this.config.getNumber('STEP_TIMEOUT', 30000);
+        const timeout = this.config.getNumber('TIMEOUT', 30000);
+
+        // Store timeout in config for use by BDD Runner
+        this.config.set('TIMEOUT', timeout.toString());
         
-        // Store timeouts in config for use by BDD Runner
-        this.config.set('DEFAULT_TIMEOUT', defaultTimeout.toString());
-        this.config.set('STEP_TIMEOUT', stepTimeout.toString());
-        
-        CSReporter.debug(`BDD timeouts configured - default: ${defaultTimeout}ms, step: ${stepTimeout}ms`);
+        CSReporter.debug(`BDD timeout configured: ${timeout}ms`);
     }
 
     private registerHooks(): void {
@@ -120,16 +118,11 @@ export class CSStepRegistry {
         Before({ timeout: 30000 }, async function(this: any, scenario: any) {
             CSReporter.startTest(scenario.pickle.name);
             
-            // Launch browser based on strategy
-            const strategy = this.config.get('BROWSER_INSTANCE_STRATEGY', 'new-per-scenario');
-            
-            if (strategy === 'new-per-scenario' || !this.browserManager.getBrowser()) {
+            // Launch browser based on reuse configuration
+            const browserReuseEnabled = this.config.getBoolean('BROWSER_REUSE_ENABLED', false);
+
+            if (!browserReuseEnabled || !this.browserManager.getBrowser()) {
                 await this.browserManager.launch();
-            } else if (strategy === 'new-context-per-scenario') {
-                // Create new context only
-                await this.browserManager.closeContext();
-                await this.browserManager.createContext();
-                await this.browserManager.createPage();
             }
             
             // Store scenario context
@@ -147,12 +140,13 @@ export class CSStepRegistry {
                 CSReporter.endTest(status);
             }
             
-            // Handle browser based on strategy
-            const strategy = this.config.get('BROWSER_INSTANCE_STRATEGY', 'new-per-scenario');
-            
-            if (strategy === 'new-per-scenario') {
+            // Handle browser based on reuse configuration
+            const browserReuseEnabled = this.config.getBoolean('BROWSER_REUSE_ENABLED', false);
+
+            if (!browserReuseEnabled) {
                 await this.browserManager.close();
-            } else if (strategy === 'new-context-per-scenario') {
+            } else {
+                // Keep browser open for reuse
                 await this.browserManager.closePage();
                 await this.browserManager.closeContext();
             }

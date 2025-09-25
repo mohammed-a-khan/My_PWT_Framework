@@ -265,9 +265,12 @@ export class CSBDDRunner {
                 // Generate professional report will be moved after browser close to ensure HAR files are saved
             }
             
-            // Finalize test run (ZIP if configured)
-            await this.resultsManager.finalizeTestRun();
-            
+            // Finalize test run (ZIP if configured) - only for sequential execution
+            // For parallel execution, this is done in CSReportAggregator
+            if (!this.parallelExecutionDone) {
+                await this.resultsManager.finalizeTestRun();
+            }
+
             CSReporter.pass(`Test execution completed in ${duration}ms`);
 
             // Close browsers BEFORE generating report so HAR/video files are saved
@@ -636,7 +639,7 @@ export class CSBDDRunner {
 
             // Generate reports
             const aggregator = CSReportAggregator.getInstance();
-            aggregator.aggregateParallelResults(allScenarios, allArtifacts);
+            await aggregator.aggregateParallelResults(allScenarios, allArtifacts);
 
             // Mark parallel execution as done to prevent regular report generation from overwriting
             this.parallelExecutionDone = true;
@@ -1095,7 +1098,7 @@ export class CSBDDRunner {
                         const screenshotPath = `${screenshotDir}/${filename}`;
                         await page.screenshot({
                             path: screenshotPath,
-                            fullPage: this.config.getBoolean('SCREENSHOT_FULL_PAGE', false)
+                            fullPage: false
                         });
                         CSReporter.info(`Step failure screenshot: ${screenshotPath}`);
                         // Store the full path for artifact collection
@@ -1417,7 +1420,7 @@ export class CSBDDRunner {
     
     // DEPRECATED - Replaced by CSProfessionalReportGenerator
     private async generateHtmlReportLegacy(): Promise<void> {
-        const reportDir = this.config.get('REPORT_DIR', './test-results/reports');
+        const reportDir = this.config.get('REPORTS_BASE_DIR', './reports');
         const reportPath = path.join(reportDir, 'index.html');
         
         // Ensure directory exists
@@ -1510,7 +1513,7 @@ export class CSBDDRunner {
     
     // DEPRECATED - Replaced by CSProfessionalReportGenerator
     private async generateJsonReportLegacy(): Promise<void> {
-        const reportDir = this.config.get('REPORT_DIR', './test-results/reports');
+        const reportDir = this.config.get('REPORTS_BASE_DIR', './reports');
         const reportPath = path.join(reportDir, 'results.json');
         
         // Ensure directory exists
@@ -1571,7 +1574,7 @@ export class CSBDDRunner {
                     const screenshotPath = `${screenshotDir}/failure-${timestamp}.png`;
                     await page.screenshot({ 
                         path: screenshotPath, 
-                        fullPage: this.config.getBoolean('SCREENSHOT_FULL_PAGE', true) 
+                        fullPage: true 
                     });
                     CSReporter.info(`Screenshot captured: ${screenshotPath}`);
                     this.scenarioContext.addScreenshot(screenshotPath, 'failure');
@@ -1667,6 +1670,9 @@ export class CSBDDRunner {
                     } else {
                         CSReporter.debug('Browser kept open for reuse (state not cleared)');
                     }
+
+                    // Restart trace recording for the next scenario (after state is cleared)
+                    await (this.browserManager as any).restartTraceForNextScenario?.();
                 }
             } else {
                 // Default behavior - close browser after each scenario
@@ -1752,7 +1758,7 @@ export class CSBDDRunner {
     private async uploadResultsToADO(): Promise<void> {
         try {
             const adoUrl = this.config.get('ADO_URL');
-            const adoToken = this.config.get('ADO_TOKEN');
+            const adoToken = this.config.get('ADO_PAT');
             const projectId = this.config.get('ADO_PROJECT_ID');
             
             if (!adoUrl || !adoToken || !projectId) {
@@ -2093,7 +2099,7 @@ export class CSBDDRunner {
             }
 
             // Check capture modes to determine what to log
-            const videoCaptureMode = this.config.get('VIDEO_CAPTURE_MODE', 'never').toLowerCase();
+            const videoCaptureMode = this.config.get('BROWSER_VIDEO', 'off').toLowerCase();
             const harCaptureMode = this.config.get('HAR_CAPTURE_MODE', 'never').toLowerCase();
             const traceCaptureMode = this.config.get('TRACE_CAPTURE_MODE', 'never').toLowerCase();
 

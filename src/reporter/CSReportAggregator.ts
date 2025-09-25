@@ -8,6 +8,7 @@ import * as path from 'path';
 import { CSReporter } from './CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSWorldClassReportGenerator_Enhanced } from './CSWorldClassReportGenerator_Enhanced';
+import { CSTestResultsManager } from './CSTestResultsManager';
 
 export class CSReportAggregator {
     private static instance: CSReportAggregator;
@@ -44,7 +45,7 @@ export class CSReportAggregator {
     /**
      * Aggregate results from parallel execution
      */
-    public aggregateParallelResults(scenarios: any[], artifacts: any) {
+    public async aggregateParallelResults(scenarios: any[], artifacts: any) {
         CSReporter.debug('Aggregating parallel execution results');
 
         // Aggregate scenarios
@@ -93,13 +94,13 @@ export class CSReportAggregator {
         }
 
         // Generate consolidated report
-        this.generateConsolidatedReport();
+        await this.generateConsolidatedReport();
     }
 
     /**
      * Generate consolidated report from aggregated results
      */
-    private generateConsolidatedReport() {
+    private async generateConsolidatedReport() {
         try {
             // Use the actual test results directory that was created at the start
             let testResultsDir = this.config.get('TEST_RESULTS_DIR');
@@ -192,6 +193,10 @@ export class CSReportAggregator {
             }
 
             CSReporter.info(`✅ Parallel execution report generated successfully`);
+
+            // Finalize test run (ZIP if configured)
+            const resultsManager = CSTestResultsManager.getInstance();
+            await resultsManager.finalizeTestRun();
 
         } catch (error: any) {
             CSReporter.error(`Failed to generate consolidated report: ${error.message}`);

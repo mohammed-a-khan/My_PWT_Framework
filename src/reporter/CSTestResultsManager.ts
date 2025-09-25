@@ -202,36 +202,6 @@ export class CSTestResultsManager {
         this.consoleLogs = [];
     }
     
-    /**
-     * Clean up artifacts based on test status
-     */
-    public async cleanupArtifacts(testPassed: boolean): Promise<void> {
-        const cleanupPass = this.config.getBoolean('ARTIFACTS_CLEANUP_PASS', true);
-        const cleanupFail = this.config.getBoolean('ARTIFACTS_CLEANUP_FAIL', false);
-        
-        if ((testPassed && !cleanupPass) || (!testPassed && !cleanupFail)) {
-            return; // No cleanup needed
-        }
-        
-        // Determine which artifacts to keep based on capture mode
-        const artifactsToClean = ['video', 'screenshot', 'trace', 'har'] as const;
-        
-        for (const artifact of artifactsToClean) {
-            if (!this.shouldCaptureArtifact(artifact, testPassed)) {
-                // Clean up this artifact type
-                const dir = path.join(this.currentTestRunDir, `${artifact}s`);
-                if (fs.existsSync(dir)) {
-                    const files = fs.readdirSync(dir);
-                    files.forEach(file => {
-                        if (file.includes(testPassed ? 'pass-' : 'fail-')) {
-                            fs.unlinkSync(path.join(dir, file));
-                            CSReporter.debug(`Cleaned up ${artifact}: ${file}`);
-                        }
-                    });
-                }
-            }
-        }
-    }
     
     /**
      * Finalize test run and optionally zip results
