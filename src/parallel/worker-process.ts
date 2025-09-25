@@ -187,6 +187,8 @@ class WorkerProcess {
                             this.scenarioCountForReuse = 0;
                         } else {
                             // Keep browser open but clear state if configured
+                            // Note: Trace saving is already handled by CSBDDRunner.executeSingleScenarioForWorker
+                            // so we don't need to save it here to avoid duplicates
                             if (clearStateOnReuse) {
                                 try {
                                     const context = this.browserManager.getContext();
@@ -234,16 +236,19 @@ class WorkerProcess {
 
     private async cleanup() {
         try {
-            // Now fully close the browser when worker is terminating
+            // Close the browser when worker is terminating
+            // Use closeAll() to ensure HAR files are saved but skip extra trace save
             if (this.browserManager) {
-                await this.browserManager.close();
+                console.log(`[Worker ${this.workerId}] Closing browser and saving HAR files...`);
+                await this.browserManager.closeAll();
+                console.log(`[Worker ${this.workerId}] Browser closed, HAR files should be saved`);
             }
 
             if (this.bddRunner) {
                 await this.bddRunner.cleanup();
             }
         } catch (e) {
-            // Ignore cleanup errors
+            console.error(`[Worker ${this.workerId}] Error during cleanup:`, e);
         }
     }
 }

@@ -255,7 +255,7 @@ export class CSWorldClassReportGenerator_Enhanced {
         };
 
         const baseDir = path.dirname(outputDir);
-        
+
         // Define artifact directories
         const artifactDirs = {
             screenshots: path.join(baseDir, 'screenshots'),
@@ -265,25 +265,33 @@ export class CSWorldClassReportGenerator_Enhanced {
             consoleLogs: path.join(baseDir, 'console-logs')
         };
 
+        // Debug logging
+        CSReporter.debug(`Collecting artifacts from baseDir: ${baseDir}`);
+        CSReporter.debug(`OutputDir: ${outputDir}`);
+
         // Collect each type of artifact
         Object.entries(artifactDirs).forEach(([type, dir]) => {
             if (fs.existsSync(dir)) {
                 try {
                     const files = fs.readdirSync(dir);
+                    CSReporter.debug(`Found ${files.length} ${type} files in ${dir}`);
                     files.forEach(file => {
                         const filePath = path.join(dir, file);
                         const stats = fs.statSync(filePath);
                         const relativePath = path.relative(outputDir, filePath);
-                        
+
                         artifacts[type as keyof Artifacts].push({
                             name: file,
                             path: relativePath,
                             size: stats.size
                         });
+                        CSReporter.debug(`Added ${type} artifact: ${file} with path: ${relativePath}`);
                     });
                 } catch (error) {
-                    CSReporter.debug(`Failed to collect ${type} artifacts: ${error}`);
+                    CSReporter.warn(`Failed to collect ${type} artifacts from ${dir}: ${error}`);
                 }
+            } else {
+                CSReporter.debug(`${type} directory does not exist: ${dir}`);
             }
         });
 

@@ -262,26 +262,33 @@ export class CSBDDRunner {
 
                 CSReporter.info(`Test execution completed: ${totalScenarios} scenarios (${passedScenarios} passed, ${failedScenarios} failed, ${skippedScenarios} skipped)`);
 
-                // Generate professional report
-                await this.generateProfessionalReport();
+                // Generate professional report will be moved after browser close to ensure HAR files are saved
             }
             
             // Finalize test run (ZIP if configured)
             await this.resultsManager.finalizeTestRun();
             
             CSReporter.pass(`Test execution completed in ${duration}ms`);
-            
+
+            // Close browsers BEFORE generating report so HAR/video files are saved
+            // This is important for browser reuse mode where artifacts are only saved on context close
+            try {
+                await this.browserManager.closeAll();
+                CSReporter.debug('All browsers closed - artifacts should be saved');
+            } catch (error) {
+                CSReporter.debug('Error closing browsers: ' + error);
+            }
+
+            // Generate professional report AFTER closing browsers to ensure all artifacts are saved
+            if (!this.parallelExecutionDone) {
+                await this.generateProfessionalReport();
+            }
+
         } catch (error: any) {
             CSReporter.error(`Test execution failed: ${error.message}`);
             throw error;
         } finally {
-            // Ensure all browsers are closed
-            try {
-                await this.browserManager.closeAll();
-                CSReporter.debug('All browsers closed');
-            } catch (error) {
-                CSReporter.debug('Error closing browsers: ' + error);
-            }
+            // Browser already closed above, no need to close again
         }
     }
     
@@ -1631,6 +1638,12 @@ export class CSBDDRunner {
                     await this.browserManager.close(testStatus);
                     this.scenarioCountForReuse = 0;
                 } else {
+                    // Save trace before clearing state (similar to how video/HAR work)
+                    // This ensures traces are saved per-scenario even with browser reuse
+                    // Make sure we pass the test status properly
+                    const statusToPass = testStatus || 'passed'; // Default to passed if undefined
+                    await (this.browserManager as any).saveTraceIfNeeded?.(statusToPass);
+
                     // Keep browser open but clear state if configured
                     if (clearStateOnReuse) {
                         try {

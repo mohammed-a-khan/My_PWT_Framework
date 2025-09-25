@@ -265,8 +265,9 @@ export class CSBrowserManager {
 
         // Add HAR recording if enabled
         const harCaptureMode = this.config.get('HAR_CAPTURE_MODE', 'never').toLowerCase();
-        const harEnabled = harCaptureMode !== 'never' || this.config.getBoolean('BROWSER_HAR_ENABLED', false);
-        CSReporter.debug(`HAR recording configured: ${harEnabled} (mode: ${harCaptureMode})`);
+        const harEnabledFlag = this.config.getBoolean('BROWSER_HAR_ENABLED', false);
+        const harEnabled = harEnabledFlag && harCaptureMode !== 'never';
+        CSReporter.debug(`HAR recording configured: ${harEnabled} (mode: ${harCaptureMode}, enabled: ${harEnabledFlag})`);
         if (harEnabled) {
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const uniqueId = this.isWorkerThread ? `w${this.workerId}` : 'main';
@@ -491,13 +492,19 @@ export class CSBrowserManager {
         }
     }
 
-    public async closeContext(): Promise<void> {
+    public async closeContext(testStatus?: 'passed' | 'failed', skipTraceSave: boolean = false): Promise<void> {
+        // Save trace before closing context if browser reuse is enabled
+        // Skip trace save when called from closeAll() as traces are already saved per-scenario
+        if (this.context && this.traceStarted && !skipTraceSave) {
+            await this.saveTraceIfNeeded(testStatus);
+        }
+
         if (this.context) {
             try {
                 // Use a timeout to prevent hanging on context.close()
                 await Promise.race([
                     this.context.close(),
-                    new Promise((_, reject) => 
+                    new Promise((_, reject) =>
                         setTimeout(() => reject(new Error('Context close timeout')), 5000)
                     )
                 ]);
@@ -506,6 +513,51 @@ export class CSBrowserManager {
             } finally {
                 this.context = null;
             }
+        }
+    }
+
+    public async saveTraceIfNeeded(testStatus?: 'passed' | 'failed'): Promise<void> {
+        if (!this.context || !this.traceStarted) return;
+
+        const traceCaptureMode = this.config.get('TRACE_CAPTURE_MODE', 'never').toLowerCase();
+        const resultsManager = CSTestResultsManager.getInstance();
+        const dirs = resultsManager.getDirectories();
+        const fs = require('fs');
+
+        try {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const tracePath = `${dirs.traces}/trace-${timestamp}.zip`;
+            await this.context.tracing.stop({ path: tracePath });
+            this.traceStarted = false;
+
+            // Determine if we should keep the trace
+            const actualStatus = testStatus || 'passed'; // Default to 'passed' if undefined
+            const shouldDeleteTrace = this.shouldDeleteArtifact(traceCaptureMode, actualStatus);
+            CSReporter.debug(`Trace decision: mode=${traceCaptureMode}, status=${actualStatus}, shouldDelete=${shouldDeleteTrace}`);
+
+            if (shouldDeleteTrace) {
+                try {
+                    fs.unlinkSync(tracePath);
+                    CSReporter.debug(`Trace deleted (capture mode: ${traceCaptureMode}, test ${testStatus}): ${tracePath}`);
+                } catch (error) {
+                    CSReporter.debug(`Failed to delete trace: ${error}`);
+                }
+            } else {
+                CSReporter.info(`Trace saved (capture mode: ${traceCaptureMode}, test ${testStatus}): ${tracePath}`);
+            }
+
+            // Restart tracing for next scenario if browser is being reused
+            if (this.config.getBoolean('BROWSER_REUSE_ENABLED', false)) {
+                await this.context.tracing.start({
+                    screenshots: true,
+                    snapshots: true,
+                    sources: true
+                });
+                this.traceStarted = true;
+                CSReporter.debug('Trace recording restarted for next scenario');
+            }
+        } catch (error) {
+            CSReporter.debug(`Failed to save/restart trace: ${error}`);
         }
     }
 
@@ -703,7 +755,8 @@ export class CSBrowserManager {
 
     public async closeAll(): Promise<void> {
         await this.closePage();
-        await this.closeContext();
+        // Skip trace save in closeContext as traces are already saved per-scenario
+        await this.closeContext(undefined, true);
         await this.closeBrowser();
         
         // Close all pooled browsers

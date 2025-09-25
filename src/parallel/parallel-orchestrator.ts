@@ -388,20 +388,38 @@ export class ParallelOrchestrator {
     }
 
     private async cleanup() {
+        // Send terminate message to all workers
+        const terminationPromises: Promise<void>[] = [];
+
         for (const worker of this.workers.values()) {
             try {
-                worker.process.send({ type: 'terminate' });
+                const terminationPromise = new Promise<void>((resolve) => {
+                    // Set up a timeout in case worker doesn't exit cleanly
+                    const timeout = setTimeout(() => {
+                        if (worker.process.connected) {
+                            worker.process.kill();
+                        }
+                        resolve();
+                    }, 5000); // Give workers 5 seconds to cleanup and save HAR files
 
-                // Give worker time to cleanup
-                setTimeout(() => {
-                    if (worker.process.connected) {
-                        worker.process.kill();
-                    }
-                }, 1000);
+                    // Listen for worker exit
+                    worker.process.once('exit', () => {
+                        clearTimeout(timeout);
+                        resolve();
+                    });
+
+                    // Send terminate message
+                    worker.process.send({ type: 'terminate' });
+                });
+
+                terminationPromises.push(terminationPromise);
             } catch (e) {
                 // Ignore errors during cleanup
             }
         }
+
+        // Wait for all workers to terminate
+        await Promise.all(terminationPromises);
         this.workers.clear();
     }
 }
