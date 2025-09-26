@@ -684,16 +684,24 @@ export class CSBrowserManager {
 
         // Handle HAR file
         const harCaptureMode = this.config.get('HAR_CAPTURE_MODE', 'never').toLowerCase();
-        if (harCaptureMode !== 'never' && this.currentHarPath) {
-            const shouldDeleteHar = this.shouldDeleteArtifact(harCaptureMode, testStatus);
-            CSReporter.debug(`HAR decision: mode=${harCaptureMode}, status=${testStatus}, shouldDelete=${shouldDeleteHar}`);
+        const browserReuseEnabled = this.config.getBoolean('BROWSER_REUSE_ENABLED', false);
 
-            if (shouldDeleteHar) {
-                // Mark for deletion after context closes
-                this.harsToDelete.push(this.currentHarPath);
-                CSReporter.debug(`HAR will be deleted (capture mode: ${harCaptureMode}, test ${testStatus}): ${this.currentHarPath}`);
+        if (harCaptureMode !== 'never' && this.currentHarPath) {
+            // With browser reuse, HAR accumulates across all scenarios
+            // Don't mark for deletion until the context actually closes
+            if (browserReuseEnabled) {
+                CSReporter.debug(`HAR accumulating (browser reuse enabled): ${this.currentHarPath}`);
             } else {
-                CSReporter.info(`HAR saved (capture mode: ${harCaptureMode}, test ${testStatus}): ${this.currentHarPath}`);
+                const shouldDeleteHar = this.shouldDeleteArtifact(harCaptureMode, testStatus);
+                CSReporter.debug(`HAR decision: mode=${harCaptureMode}, status=${testStatus}, shouldDelete=${shouldDeleteHar}`);
+
+                if (shouldDeleteHar) {
+                    // Mark for deletion after context closes
+                    this.harsToDelete.push(this.currentHarPath);
+                    CSReporter.debug(`HAR will be deleted (capture mode: ${harCaptureMode}, test ${testStatus}): ${this.currentHarPath}`);
+                } else {
+                    CSReporter.info(`HAR saved (capture mode: ${harCaptureMode}, test ${testStatus}): ${this.currentHarPath}`);
+                }
             }
         }
 
@@ -747,21 +755,56 @@ export class CSBrowserManager {
         }
         this.harsToDelete = [];
 
-        // Reset paths for next test
-        this.currentHarPath = null;
-
-        const browserReuseEnabled = this.config.getBoolean('BROWSER_REUSE_ENABLED', false);
+        // browserReuseEnabled already declared above, just reuse it
         if (!browserReuseEnabled) {
+            // Reset HAR path and close browser when not reusing
+            this.currentHarPath = null;
             await this.closeBrowser();
         }
+        // Keep currentHarPath for browser reuse - HAR accumulates until context closes
     }
 
-    public async closeAll(): Promise<void> {
+    public async closeAll(finalStatus?: 'passed' | 'failed'): Promise<void> {
+        // Handle HAR file for browser reuse scenario
+        // When browser reuse is enabled, HAR accumulates across all scenarios
+        if (this.currentHarPath && this.config.getBoolean('BROWSER_REUSE_ENABLED', false)) {
+            const harCaptureMode = this.config.get('HAR_CAPTURE_MODE', 'never').toLowerCase();
+
+            // Determine final HAR status based on capture mode
+            // For 'on-failure' mode, keep HAR if ANY test failed
+            // For 'always' mode, always keep HAR
+            const shouldKeepHar = harCaptureMode === 'always' ||
+                                 (harCaptureMode === 'on-failure' && finalStatus === 'failed');
+
+            if (shouldKeepHar) {
+                CSReporter.info(`HAR will be saved: ${this.currentHarPath}`);
+            } else {
+                // Mark for deletion if all tests passed and mode is 'on-failure'
+                this.harsToDelete.push(this.currentHarPath);
+                CSReporter.debug(`HAR marked for deletion (all tests passed): ${this.currentHarPath}`);
+            }
+        }
+
         await this.closePage();
         // Skip trace save in closeContext as traces are already saved per-scenario
         await this.closeContext(undefined, true);
+
+        // Delete HARs marked for deletion AFTER context is closed
+        const fs = require('fs');
+        for (const harToDelete of this.harsToDelete) {
+            try {
+                if (fs.existsSync(harToDelete)) {
+                    fs.unlinkSync(harToDelete);
+                    CSReporter.debug(`HAR deleted: ${harToDelete}`);
+                }
+            } catch (error) {
+                CSReporter.debug(`Failed to delete HAR: ${error}`);
+            }
+        }
+        this.harsToDelete = [];
+
         await this.closeBrowser();
-        
+
         // Close all pooled browsers
         for (const [type, browser] of this.browserPool) {
             await browser.close();

@@ -45,6 +45,7 @@ class WorkerProcess {
     private bddRunner: any;
     private browserManager: any;
     private scenarioCountForReuse: number = 0;
+    private anyTestFailed: boolean = false;  // Track if any test failed for HAR decision
 
     constructor() {
         this.workerId = parseInt(process.env.WORKER_ID || '0');
@@ -184,6 +185,11 @@ class WorkerProcess {
             result.endTime = scenarioResult.endTime;
             result.testData = scenarioResult.testData;  // Pass test data for data-driven scenarios
 
+            // Track if any test failed for HAR decision
+            if (result.status === 'failed') {
+                this.anyTestFailed = true;
+            }
+
             // Capture any console logs
             const { CSParallelMediaHandler } = require('../parallel/CSParallelMediaHandler');
             const mediaHandler = CSParallelMediaHandler.getInstance();
@@ -278,11 +284,12 @@ class WorkerProcess {
     private async cleanup() {
         try {
             // Close the browser when worker is terminating
-            // Use closeAll() to ensure HAR files are saved but skip extra trace save
+            // Pass overall test status for proper HAR handling
             if (this.browserManager) {
-                console.log(`[Worker ${this.workerId}] Closing browser and saving HAR files...`);
-                await this.browserManager.closeAll();
-                console.log(`[Worker ${this.workerId}] Browser closed, HAR files should be saved`);
+                const finalStatus = this.anyTestFailed ? 'failed' : 'passed';
+                console.log(`[Worker ${this.workerId}] Closing browser (overall: ${finalStatus})...`);
+                await this.browserManager.closeAll(finalStatus);
+                console.log(`[Worker ${this.workerId}] Browser closed, HAR saved if needed`);
             }
 
             if (this.bddRunner) {
