@@ -49,14 +49,24 @@ export class CSProxyManager {
         this.bypassList = new Set();
         this.proxyRules = [];
         this.connectionCache = new Map();
-        this.initializeSystemProxy();
+        // Defer initialization until actually needed
+        // this.initializeSystemProxy();
     }
+
+    private initialized: boolean = false;
 
     public static getInstance(): CSProxyManager {
         if (!CSProxyManager.instance) {
             CSProxyManager.instance = new CSProxyManager();
         }
         return CSProxyManager.instance;
+    }
+
+    private ensureInitialized(): void {
+        if (!this.initialized) {
+            this.initializeSystemProxy();
+            this.initialized = true;
+        }
     }
 
     private initializeSystemProxy(): void {
@@ -193,6 +203,7 @@ export class CSProxyManager {
     }
 
     public getProxyForUrl(targetUrl: string): CSAdvancedProxyConfig | undefined {
+        this.ensureInitialized();
         // Check if proxy should be bypassed
         if (this.shouldBypassProxy(targetUrl)) {
             CSReporter.debug(`Bypassing proxy for: ${targetUrl}`);
@@ -233,6 +244,7 @@ export class CSProxyManager {
     }
 
     public createProxyAgent(targetUrl: string, options?: http.RequestOptions): http.Agent | https.Agent {
+        this.ensureInitialized();
         const proxyConfig = this.getProxyForUrl(targetUrl);
 
         if (!proxyConfig) {
@@ -546,4 +558,6 @@ export class CSProxyManager {
     }
 }
 
-export const proxyManager = CSProxyManager.getInstance();
+// Remove global instance creation - let consumers call getInstance() when needed
+// This was causing 20+ second delay at startup
+// export const proxyManager = CSProxyManager.getInstance();

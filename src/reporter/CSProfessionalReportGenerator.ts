@@ -1956,7 +1956,17 @@ export class CSProfessionalReportGenerator {
             <div class="scenario-info">
                 <div class="scenario-name">${htmlEscape(scenario.name)}</div>
                 <div class="scenario-meta">
-                    <span><i class="fas fa-tag"></i> ${scenario.tags.filter((tag: string) => !tag.startsWith('@data-config:')).join(', ')}</span>
+                    <span><i class="fas fa-tag"></i> ${scenario.tags.filter((tag: string) => {
+                        // Exclude internal tags
+                        if (tag.startsWith('@data-config:')) return false;
+                        // Exclude ADO tags
+                        if (tag.startsWith('@TestPlanId:') || tag.startsWith('@TestSuiteId:') ||
+                            tag.startsWith('@TestCaseId:') || tag.startsWith('@BuildId:') ||
+                            tag.startsWith('@ReleaseId:')) return false;
+                        // Exclude @DataProvider
+                        if (tag === '@DataProvider') return false;
+                        return true;
+                    }).join(', ')}</span>
                     <span><i class="fas fa-layer-group"></i> ${scenario.steps.length} steps</span>
                 </div>
                 ${(scenario as any).testData ? (() => {

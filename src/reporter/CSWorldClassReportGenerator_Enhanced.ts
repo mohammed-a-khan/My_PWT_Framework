@@ -378,8 +378,8 @@ export class CSWorldClassReportGenerator_Enhanced {
             else fStats.skipped++;
             fStats.duration += scenario.duration || 0;
 
-            // Track tag statistics (excluding internal @data-config tags)
-            scenario.tags?.filter(tag => !tag.startsWith('@data-config:')).forEach(tag => {
+            // Track tag statistics (excluding internal and ADO tags)
+            scenario.tags?.filter(tag => !this.shouldExcludeTag(tag)).forEach(tag => {
                 tagStats.set(tag, (tagStats.get(tag) || 0) + 1);
             });
         });
@@ -417,6 +417,23 @@ export class CSWorldClassReportGenerator_Enhanced {
             performanceMetrics,
             failureReasons: Array.from(failureReasons.entries()).map(([reason, count]) => ({ reason, count }))
         };
+    }
+
+    /**
+     * Check if a tag should be excluded from charts and statistics
+     */
+    private static shouldExcludeTag(tag: string): boolean {
+        // Exclude internal data configuration tags
+        if (tag.startsWith('@data-config:')) return true;
+
+        // Exclude ADO integration tags from charts
+        const adoTags = ['@TestPlanId:', '@TestSuiteId:', '@TestCaseId:', '@BuildId:', '@ReleaseId:'];
+        if (adoTags.some(adoTag => tag.startsWith(adoTag))) return true;
+
+        // Exclude @DataProvider tag
+        if (tag === '@DataProvider') return true;
+
+        return false;
     }
 
     /**

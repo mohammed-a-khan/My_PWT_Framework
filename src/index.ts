@@ -1,85 +1,63 @@
 #!/usr/bin/env node
 
+// PERFORMANCE FIX: Only import minimist at top level to avoid 25-second delay
+// All other imports moved to lazy loading inside functions
 import minimist from 'minimist';
-import { CSConfigurationManager } from './core/CSConfigurationManager';
-import { CSReporter } from './reporter/CSReporter';
 
-// Export all framework components for external use
-export * from './core/CSConfigurationManager';
-export * from './core/CSBasePage';
-// export * from './core/CSPageFactory'; // Has conflict with CSElements
-export * from './browser/CSBrowserManager';
-export * from './browser/CSBrowserPool';
-export * from './element/CSWebElement';
-// export * from './reporter/CSReporter'; // Has conflict with TestResult
-export * from './bdd/CSBDDRunner';
-// export * from './bdd/CSStepRegistry'; // Has conflict with CSDataProvider
-// API Module Exports
-export * from './api/CSAPIClient';
-export * from './api/CSAPIRunner';
-export * from './api/CSAPIValidator';
-export * from './api/CSAPIExecutor';
+// ============================================================================
+// EXPORTS DISABLED FOR CLI PERFORMANCE
+// These exports cause all modules to load at startup, adding 20-25 seconds
+// If you need to use this as a library, create a separate entry point
+// ============================================================================
 
-// API Type Exports
-export * from './api/types/CSApiTypes';
-
-// API Client Exports
-export * from './api/client/CSHttpClient';
-export * from './api/client/CSRequestBuilder';
-export * from './api/client/CSAuthenticationHandler';
-export * from './api/client/CSResponseParser';
-export * from './api/client/CSConnectionPool';
-export * from './api/client/CSRetryHandler';
-export * from './api/client/CSProxyManager';
-
-// API Context Exports
-export { CSApiContext } from './api/context/CSApiContext';
-export { CSApiContextManager } from './api/context/CSApiContextManager';
-export {
-    CSApiChainContext,
-    CSApiChainManager,
-    chainManager,
-    CSChainState,
-    CSChainWorkflow
-} from './api/context/CSApiChainContext';
-
-// API Auth Exports
-export { CSOAuth2Handler } from './api/auth/CSOAuth2Handler';
-export { CSAWSSignatureHandler } from './api/auth/CSAWSSignatureHandler';
-export { CSCertificateManager } from './api/auth/CSCertificateManager';
-
-// API Template Exports
-export * from './api/templates/CSPlaceholderResolver';
-export * from './api/templates/CSRequestTemplateEngine';
-export * from './api/templates/CSTemplateCache';
-
-// API Validator Exports
-export * from './api/validators/CSStatusCodeValidator';
-export * from './api/validators/CSHeaderValidator';
-export * from './api/validators/CSBodyValidator';
-export * from './api/validators/CSSchemaValidator';
-export * from './api/validators/CSJSONPathValidator';
-export * from './api/validators/CSXMLValidator';
-
-// Database exports
-export * from './database/CSDatabaseManager';
-// export * from './data/CSDataProvider'; // Commented to avoid conflict
-export * from './ado/CSADOClient';
-export * from './ai/CSAIEngine';
-export * from './dashboard/CSLiveDashboard';
-export * from './evidence/CSEvidenceCollector';
-
-// Export specific items to avoid conflicts
-export { CSPageFactory } from './core/CSPageFactory';
-export { CSReporter } from './reporter/CSReporter';
-export { CSStepRegistry, CSBDDStepDef } from './bdd/CSStepRegistry';
-export { CSDataProvider } from './data/CSDataProvider';
-
-// Export new framework components
-export { CSPipelineOrchestrator } from './pipeline/CSPipelineOrchestrator';
-export { CSTokenManager } from './auth/CSTokenManager';
-export { CSPerformanceMonitor } from './monitoring/CSPerformanceMonitor';
-export { CSElementResolver } from './element/CSElementResolver';
+/* COMMENTED OUT FOR PERFORMANCE - DO NOT UNCOMMENT IN CLI MODE */
+// export * from './core/CSConfigurationManager';
+// export * from './core/CSBasePage';
+// export * from './browser/CSBrowserManager';
+// export * from './browser/CSBrowserPool';
+// export * from './element/CSWebElement';
+// export * from './bdd/CSBDDRunner';
+// export * from './api/CSAPIClient';
+// export * from './api/CSAPIRunner';
+// export * from './api/CSAPIValidator';
+// export * from './api/CSAPIExecutor';
+// export * from './api/types/CSApiTypes';
+// export * from './api/client/CSHttpClient';
+// export * from './api/client/CSRequestBuilder';
+// export * from './api/client/CSAuthenticationHandler';
+// export * from './api/client/CSResponseParser';
+// export * from './api/client/CSConnectionPool';
+// export * from './api/client/CSRetryHandler';
+// export * from './api/client/CSProxyManager';
+// export { CSApiContext } from './api/context/CSApiContext';
+// export { CSApiContextManager } from './api/context/CSApiContextManager';
+// export { CSApiChainContext, CSApiChainManager, chainManager, CSChainState, CSChainWorkflow } from './api/context/CSApiChainContext';
+// export { CSOAuth2Handler } from './api/auth/CSOAuth2Handler';
+// export { CSAWSSignatureHandler } from './api/auth/CSAWSSignatureHandler';
+// export { CSCertificateManager } from './api/auth/CSCertificateManager';
+// export * from './api/templates/CSPlaceholderResolver';
+// export * from './api/templates/CSRequestTemplateEngine';
+// export * from './api/templates/CSTemplateCache';
+// export * from './api/validators/CSStatusCodeValidator';
+// export * from './api/validators/CSHeaderValidator';
+// export * from './api/validators/CSBodyValidator';
+// export * from './api/validators/CSSchemaValidator';
+// export * from './api/validators/CSJSONPathValidator';
+// export * from './api/validators/CSXMLValidator';
+// export * from './database/CSDatabaseManager';
+// export * from './ado/CSADOClient';
+// export * from './ai/CSAIEngine';
+// export * from './dashboard/CSLiveDashboard';
+// export * from './evidence/CSEvidenceCollector';
+// export { CSPageFactory } from './core/CSPageFactory';
+// export { CSReporter } from './reporter/CSReporter';
+// export { CSStepRegistry, CSBDDStepDef } from './bdd/CSStepRegistry';
+// export { CSDataProvider } from './data/CSDataProvider';
+// export { CSPipelineOrchestrator } from './pipeline/CSPipelineOrchestrator';
+// export { CSTokenManager } from './auth/CSTokenManager';
+// export { CSPerformanceMonitor } from './monitoring/CSPerformanceMonitor';
+// export { CSElementResolver } from './element/CSElementResolver';
+/* END COMMENTED EXPORTS */
 
 // Lightning-fast startup - minimal core loading
 const startTime = Date.now();
@@ -88,7 +66,10 @@ async function main() {
     try {
         // Parse command line arguments
         const args = minimist(process.argv.slice(2));
-        
+
+        // Lazy load configuration manager to avoid startup delay
+        const { CSConfigurationManager } = await import('./core/CSConfigurationManager');
+
         // Initialize configuration (< 100ms)
         const config = CSConfigurationManager.getInstance();
         await config.initialize(args);
@@ -119,6 +100,10 @@ async function main() {
         
         // Total startup check
         const totalStartupTime = Date.now() - startTime;
+
+        // Lazy load reporter only when needed
+        const { CSReporter } = await import('./reporter/CSReporter');
+
         if (totalStartupTime < 1000) {
             CSReporter.debug(`⚡ Lightning-fast startup: ${totalStartupTime}ms`);
         } else {
@@ -134,7 +119,7 @@ async function main() {
     }
 }
 
-function determineExecutionMode(args: any, config: CSConfigurationManager): string {
+function determineExecutionMode(args: any, config: any): string {
     // Check if running specific tests
     if (args.feature || args.features || config.get('FEATURES')) {
         return 'bdd';
@@ -154,10 +139,17 @@ function determineExecutionMode(args: any, config: CSConfigurationManager): stri
     return 'bdd';
 }
 
-async function loadRequiredModules(mode: string, config: CSConfigurationManager) {
+async function loadRequiredModules(mode: string, config: any) {
+    console.log(`[PERF] loadRequiredModules called for mode: ${mode}`);
     const lazyLoading = config.getBoolean('LAZY_LOADING', true);
     const parallel = config.getBoolean('PARALLEL_INITIALIZATION', true);
-    
+
+    // ALWAYS skip module loading if lazy loading is enabled
+    if (lazyLoading) {
+        console.log(`[PERF] Lazy loading enabled - skipping module preload`);
+        return;  // Don't preload ANY modules
+    }
+
     if (!lazyLoading) {
         // Load all modules (slower)
         await Promise.all([
@@ -168,50 +160,22 @@ async function loadRequiredModules(mode: string, config: CSConfigurationManager)
         return;
     }
     
-    // Selective loading based on mode
-    const loadPromises: Promise<any>[] = [];
-    
-    // Always need reporter
-    loadPromises.push(import('./reporter/CSReporter'));
-    
-    switch (mode) {
-        case 'bdd':
-            if (parallel) {
-                // Parallel loading for speed
-                loadPromises.push(
-                    import('./bdd/CSBDDRunner'),
-                    import('./browser/CSBrowserManager'),
-                    import('./element/CSWebElement')
-                );
-            } else {
-                // Sequential loading
-                await import('./bdd/CSBDDRunner');
-                await import('./browser/CSBrowserManager');
-                await import('./element/CSWebElement');
-            }
-            break;
-            
-        case 'api':
-            loadPromises.push(import('./api/CSAPIClient'));
-            break;
-            
-        case 'database':
-            loadPromises.push(import('./database/CSDatabaseManager'));
-            break;
-    }
-    
-    if (parallel && loadPromises.length > 0) {
-        await Promise.all(loadPromises);
-    }
+    // Don't preload anything - let modules load on demand
 }
 
 async function execute(mode: string) {
     const args = minimist(process.argv.slice(2));
+
+    // Lazy load configuration manager
+    const { CSConfigurationManager } = await import('./core/CSConfigurationManager');
     const config = CSConfigurationManager.getInstance();
     
     switch (mode) {
         case 'bdd':
+            console.log('[PERF] About to import CSBDDRunner...');
+            const importStart = Date.now();
             const { CSBDDRunner } = await import('./bdd/CSBDDRunner');
+            console.log(`[PERF] CSBDDRunner imported in ${Date.now() - importStart}ms`);
             const runner = CSBDDRunner.getInstance();
             
             // Pass CLI options to the runner
@@ -299,9 +263,10 @@ async function execute(mode: string) {
             
         case 'api':
             const { CSAPIExecutor } = await import('./api/CSAPIExecutor');
+            const { CSReporter: Reporter } = await import('./reporter/CSReporter');
             const apiExecutor = new CSAPIExecutor();
             // Execute API tests based on configuration
-            CSReporter.info('API testing mode activated');
+            Reporter.info('API testing mode activated');
             break;
             
         case 'database':

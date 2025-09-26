@@ -71,11 +71,19 @@ export class CSADOClient {
     private proxyAgent?: HttpsProxyAgent<string> | SocksProxyAgent;
     private baseUrl: string;
     private headers: any;
+    private testPointsCache: Map<string, any[]> = new Map();  // Cache for test points
     
     private constructor() {
         this.config = CSConfigurationManager.getInstance();
         this.adoConfig = this.loadADOConfig();
+
+        // Debug logging to verify correct values
+        CSReporter.debug(`ADO Organization: ${this.adoConfig.organization}`);
+        CSReporter.debug(`ADO Project: ${this.adoConfig.project}`);
+
         this.baseUrl = `https://dev.azure.com/${this.adoConfig.organization}/${this.adoConfig.project}/_apis`;
+        CSReporter.info(`ADO Base URL: ${this.baseUrl}`);
+
         this.headers = {
             'Content-Type': 'application/json',
             'Authorization': `Basic ${Buffer.from(`:${this.adoConfig.pat}`).toString('base64')}`
@@ -395,18 +403,54 @@ export class CSADOClient {
         CSReporter.info(`Fetching test suite: ${suiteId}`);
         return await this.makeRequest('GET', `/test/plans/${planId}/suites/${suiteId}`);
     }
+
+    public getTestPoints(planId: number, suiteId: number): any[] {
+        // In a real implementation, this would fetch test points from ADO
+        // For now, return cached test points if available
+        // This is a synchronous method for compatibility with the publisher
+        const cacheKey = `testpoints-${planId}-${suiteId}`;
+        if (this.testPointsCache.has(cacheKey)) {
+            return this.testPointsCache.get(cacheKey)!;
+        }
+
+        // Return empty array if not cached
+        // The async version (fetchTestPoints) should be called first to populate cache
+        return [];
+    }
+
+    public async fetchTestPoints(planId: number, suiteId: number): Promise<any[]> {
+        CSReporter.info(`Fetching test points for plan ${planId}, suite ${suiteId}`);
+        // FIXED: Use 'testpoints' (plural) not 'testpoint'
+        const response = await this.makeRequest('GET', `/test/plans/${planId}/suites/${suiteId}/testpoints`);
+
+        const testPoints = response.value || [];
+
+        // Cache the test points
+        const cacheKey = `testpoints-${planId}-${suiteId}`;
+        this.testPointsCache.set(cacheKey, testPoints);
+
+        CSReporter.info(`Fetched ${testPoints.length} test points`);
+        return testPoints;
+    }
     
-    public async createTestRun(name: string, testCases: number[]): Promise<number> {
+    public async createTestRun(name: string, testPoints: number[]): Promise<number> {
         CSReporter.info(`Creating test run: ${name}`);
-        
-        const data = {
+
+        const data: any = {
             name: name,
             automated: true,
-            state: 'InProgress',
-            testCases: testCases.map(id => ({ id }))
+            state: 'InProgress'
         };
-        
+
+        // If we have test points, add them to create a planned test run
+        // This ensures only the specified test points get results
+        if (testPoints && testPoints.length > 0) {
+            data.pointIds = testPoints;
+            CSReporter.info(`Creating test run with ${testPoints.length} test points`);
+        }
+
         const response = await this.makeRequest('POST', '/test/runs', data);
+        CSReporter.info(`Test run created with ID: ${response.id}`);
         return response.id;
     }
     

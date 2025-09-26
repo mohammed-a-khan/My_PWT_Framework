@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { CSEncryptionUtil } from '../utils/CSEncryptionUtil';
-import { CSReporter } from '../reporter/CSReporter';
+// Removed CSReporter import for performance - will use console.log instead
 
 /**
  * CS Configuration Manager - 7-Level Hierarchy System
@@ -92,7 +92,10 @@ export class CSConfigurationManager {
             Object.entries(config).forEach(([key, value]) => {
                 this.config.set(key, value);
             });
-            CSReporter.debug(`✓ Loaded ENV ${description}: ${filePath}`);
+            // Use console.log instead of CSReporter for performance
+            if (process.env.DEBUG) {
+                console.log(`[DEBUG] ✓ Loaded ENV ${description}: ${filePath}`);
+            }
         }
     }
 
@@ -128,7 +131,10 @@ export class CSConfigurationManager {
                 await this.loadConfig(path.join(dirPath, file), `${description} - ${file}`);
             }
         } catch (error) {
-            CSReporter.debug(`Could not load additional env files from ${dirPath}: ${error}`);
+            // Use console.log instead of CSReporter for performance
+            if (process.env.DEBUG) {
+                console.log(`[DEBUG] Could not load additional env files from ${dirPath}: ${error}`);
+            }
         }
     }
 
@@ -333,7 +339,10 @@ export class CSConfigurationManager {
                 const decrypted = this.encryptionUtil.decrypt(value);
                 if (decrypted) {
                     this.config.set(key, decrypted);
-                    CSReporter.debug(`Decrypted ${key} successfully`);
+                    // Use console.log instead of CSReporter for performance
+                    if (process.env.DEBUG) {
+                        console.log(`[DEBUG] Decrypted ${key} successfully`);
+                    }
                 }
             }
         });

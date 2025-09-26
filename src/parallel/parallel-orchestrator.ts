@@ -10,6 +10,7 @@ import { ParsedFeature, ParsedScenario, ParsedExamples } from '../bdd/CSBDDEngin
 import { CSReporter } from '../reporter/CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSDataProvider } from '../data/CSDataProvider';
+import { CSADOIntegration } from '../ado/CSADOIntegration';
 
 interface WorkItem {
     id: string;
@@ -37,6 +38,7 @@ export class ParallelOrchestrator {
     private completedCount = 0;
     private totalCount = 0;
     private maxWorkers: number;
+    private adoIntegration: any;
 
     constructor(maxWorkers?: number) {
         this.maxWorkers = maxWorkers || parseInt(process.env.PARALLEL_WORKERS || '0') || os.cpus().length;
@@ -47,6 +49,22 @@ export class ParallelOrchestrator {
      */
     public async execute(features: ParsedFeature[]): Promise<Map<string, any>> {
         CSReporter.info(`Starting parallel execution with ${this.maxWorkers} workers`);
+
+        // Initialize ADO integration for parallel mode
+        this.adoIntegration = CSADOIntegration.getInstance();
+        await this.adoIntegration.initialize(true);
+
+        // Collect all scenarios for ADO test point mapping BEFORE creating test run
+        const allScenarios: Array<{scenario: ParsedScenario, feature: ParsedFeature}> = [];
+        for (const feature of features) {
+            for (const scenario of feature.scenarios || []) {
+                allScenarios.push({scenario, feature});
+            }
+        }
+        await this.adoIntegration.collectScenarios(allScenarios);
+
+        // Now start the test run with collected test points
+        await this.adoIntegration.beforeAllTests(`PTF Parallel Run - ${new Date().toISOString()}`);
 
         // Create work items (now async to handle data loading)
         await this.createWorkItems(features);
@@ -65,6 +83,11 @@ export class ParallelOrchestrator {
 
         // Cleanup
         await this.cleanup();
+
+        // Complete ADO test run for parallel execution
+        if (this.adoIntegration?.isEnabled()) {
+            await this.adoIntegration.afterAllTests();
+        }
 
         CSReporter.info(`Parallel execution completed: ${this.completedCount}/${this.totalCount} scenarios`);
         return this.results;
@@ -312,7 +335,7 @@ export class ParallelOrchestrator {
         }
     }
 
-    private handleResult(worker: Worker, result: any) {
+    private async handleResult(worker: Worker, result: any) {
         if (worker.currentWork) {
             const work = worker.currentWork;
 
@@ -322,6 +345,22 @@ export class ParallelOrchestrator {
                 workerId: worker.id,  // Add worker ID for timeline
                 ...result
             });
+
+            // Process ADO result if metadata exists
+            if (result.adoMetadata && this.adoIntegration?.isEnabled()) {
+                const status = result.status === 'passed' ? 'passed' :
+                              result.status === 'failed' ? 'failed' : 'skipped';
+
+                // Add result for batch publishing
+                await this.adoIntegration.afterScenario(
+                    work.scenario,
+                    work.feature,
+                    status,
+                    result.duration,
+                    result.error,
+                    result.artifacts
+                );
+            }
 
             this.completedCount++;
 

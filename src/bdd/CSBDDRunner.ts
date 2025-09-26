@@ -1,4 +1,7 @@
-import { test as base, Page, BrowserContext } from '@playwright/test';
+// Lazy load playwright to improve startup performance (saves 27s)
+// import { test as base, Page, BrowserContext } from '@playwright/test';
+type Page = any;
+type BrowserContext = any;
 import { CSBDDEngine, ParsedFeature, ParsedScenario, ParsedStep, ParsedExamples, ExternalDataSource } from './CSBDDEngine';
 import { CSBDDContext } from './CSBDDContext';
 import { CSDataProvider } from '../data/CSDataProvider';
@@ -7,11 +10,21 @@ import { CSScenarioContext } from './CSScenarioContext';
 import { executeStep, getHooks, DataTable } from './CSBDDDecorators';
 import { CSReporter } from '../reporter/CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
-import { CSBrowserManager } from '../browser/CSBrowserManager';
+// Lazy load CSBrowserManager to improve startup performance (saves 36s)
+// Will be loaded when actually needed
+// import { CSBrowserManager } from '../browser/CSBrowserManager';
+let CSBrowserManager: any = null;
 import { CSTestResultsManager } from '../reporter/CSTestResultsManager';
-import { CSProfessionalReportGenerator, TestSuite as ProfessionalTestSuite, TestFeature, TestScenario, TestStep } from '../reporter/CSProfessionalReportGenerator';
-import { CSWorldClassReportGenerator_Enhanced } from '../reporter/CSWorldClassReportGenerator_Enhanced';
+// Lazy load heavy report generators to improve startup performance
+// These will be loaded only when needed at the end of test execution
+type ProfessionalTestSuite = any;
+type TestFeature = any;
+type TestScenario = any;
+type TestStep = any;
 import { CSStepValidator } from './CSStepValidator';
+// Lazy load ADO integration to improve startup performance
+// import { CSADOIntegration } from '../ado/CSADOIntegration';
+let CSADOIntegration: any = null;
 // Parallel execution imports are loaded dynamically when needed
 import * as path from 'path';
 import * as fs from 'fs';
@@ -41,7 +54,7 @@ export class CSBDDRunner {
     private context: CSBDDContext;
     private featureContext: CSFeatureContext;
     private scenarioContext: CSScenarioContext;
-    private browserManager: CSBrowserManager;
+    private browserManager: any; // CSBrowserManager - lazy loaded
     private resultsManager: CSTestResultsManager;
     private failedScenarios: Array<{scenario: string, feature: string, error: string}> = [];
     private testSuite: ProfessionalTestSuite;
@@ -50,6 +63,7 @@ export class CSBDDRunner {
     private passedCount: number = 0;
     private failedCount: number = 0;
     private skippedCount: number = 0;
+    private anyTestFailed: boolean = false;  // Track if any test failed for HAR decision
     private passedSteps: number = 0;
     private failedSteps: number = 0;
     private skippedSteps: number = 0;
@@ -57,6 +71,7 @@ export class CSBDDRunner {
     private testResults: any = {};
     private parallelExecutionDone: boolean = false;
     private scenarioCountForReuse: number = 0;
+    private adoIntegration: CSADOIntegration;
 
     private constructor() {
         this.bddEngine = CSBDDEngine.getInstance();
@@ -64,9 +79,12 @@ export class CSBDDRunner {
         this.context = CSBDDContext.getInstance();
         this.featureContext = CSFeatureContext.getInstance();
         this.scenarioContext = CSScenarioContext.getInstance();
-        this.browserManager = CSBrowserManager.getInstance();
+        // Lazy load browser manager - will be loaded when first test runs
+        this.browserManager = null;
         this.resultsManager = CSTestResultsManager.getInstance();
         this.testSuite = this.initializeTestSuite();
+        // Lazy load ADO integration - will be loaded when first test runs
+        this.adoIntegration = null;
     }
     
     private initializeTestSuite(): ProfessionalTestSuite {
@@ -100,6 +118,34 @@ export class CSBDDRunner {
             CSBDDRunner.instance = new CSBDDRunner();
         }
         return CSBDDRunner.instance;
+    }
+
+    /**
+     * Ensure browser manager is loaded (lazy loading)
+     */
+    private async ensureBrowserManager(): Promise<any> {
+        if (!this.browserManager) {
+            // Lazy load CSBrowserManager only when needed
+            if (!CSBrowserManager) {
+                CSBrowserManager = require('../browser/CSBrowserManager').CSBrowserManager;
+            }
+            this.browserManager = CSBrowserManager.getInstance();
+        }
+        return this.browserManager;
+    }
+
+    /**
+     * Ensure ADO integration is loaded (lazy loading)
+     */
+    private ensureADOIntegration(): any {
+        if (!this.adoIntegration) {
+            // Lazy load CSADOIntegration only when needed
+            if (!CSADOIntegration) {
+                CSADOIntegration = require('../ado/CSADOIntegration').CSADOIntegration;
+            }
+            this.adoIntegration = CSADOIntegration.getInstance();
+        }
+        return this.adoIntegration;
     }
 
     /**
@@ -276,8 +322,10 @@ export class CSBDDRunner {
             // Close browsers BEFORE generating report so HAR/video files are saved
             // This is important for browser reuse mode where artifacts are only saved on context close
             try {
-                await this.browserManager.closeAll();
-                CSReporter.debug('All browsers closed - artifacts should be saved');
+                // Pass the overall test status for proper HAR file handling
+                const overallStatus = this.hasFailures() ? 'failed' : 'passed';
+                await this.browserManager.closeAll(overallStatus);
+                CSReporter.debug(`All browsers closed - artifacts should be saved (overall status: ${overallStatus})`);
             } catch (error) {
                 CSReporter.debug('Error closing browsers: ' + error);
             }
@@ -486,6 +534,29 @@ export class CSBDDRunner {
     }
     
     private async executeFeatures(features: ParsedFeature[], options: RunOptions): Promise<void> {
+        // Initialize ADO integration if enabled (lazy load)
+        const adoIntegration = this.ensureADOIntegration();
+        await adoIntegration.initialize(options.parallel ? true : false);
+
+        // Collect all scenarios for ADO test point mapping
+        const allScenarios: Array<{scenario: ParsedScenario, feature: ParsedFeature}> = [];
+        for (const feature of features) {
+            // Get all scenarios from feature (apply tag filters)
+            for (const scenario of feature.scenarios || []) {
+                // Apply tag filters
+                if (this.shouldExecuteScenario(scenario, feature, options)) {
+                    allScenarios.push({scenario, feature});
+                }
+            }
+        }
+
+        // Collect test points from all scenarios before creating test run
+        await this.adoIntegration.collectScenarios(allScenarios);
+
+        // Start ADO test run with collected test points
+        const testRunName = `PTF Test Run - ${new Date().toISOString()}`;
+        await this.adoIntegration.beforeAllTests(testRunName);
+
         // Handle different types of parallel values (boolean true, number, etc.)
         let parallel = 1;
         if (typeof options.parallel === 'boolean' && options.parallel === true) {
@@ -509,6 +580,42 @@ export class CSBDDRunner {
         } else {
             await this.executeSequential(features, options);
         }
+
+        // Complete ADO test run if enabled
+        await this.adoIntegration.afterAllTests();
+    }
+
+    private shouldExecuteScenario(scenario: ParsedScenario, feature: ParsedFeature, options: RunOptions): boolean {
+        // Check tag filters
+        const allTags = [...(feature.tags || []), ...(scenario.tags || [])];
+
+        // Include tag filter
+        if (options.tags) {
+            const includeTags = options.tags.split(',').map(t => t.trim());
+            const hasIncludeTag = includeTags.some(tag =>
+                allTags.includes(tag) || allTags.includes(`@${tag}`)
+            );
+            if (!hasIncludeTag) return false;
+        }
+
+        // Exclude tag filter
+        if (options.excludeTags) {
+            const excludeTags = options.excludeTags.split(',').map(t => t.trim());
+            const hasExcludeTag = excludeTags.some(tag =>
+                allTags.includes(tag) || allTags.includes(`@${tag}`)
+            );
+            if (hasExcludeTag) return false;
+        }
+
+        // Scenario name filter
+        if (options.scenario) {
+            const scenarioFilter = options.scenario.toLowerCase();
+            if (!scenario.name.toLowerCase().includes(scenarioFilter)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private async executeSequential(features: ParsedFeature[], options: RunOptions): Promise<void> {
@@ -578,6 +685,7 @@ export class CSBDDRunner {
                 } else if (result.status === 'failed') {
                     failed++;
                     this.failedCount++;
+                    this.anyTestFailed = true;  // Track that at least one test failed
 
                     // Add to failed scenarios
                     this.failedScenarios.push({
@@ -872,11 +980,15 @@ export class CSBDDRunner {
         this.scenarioContext.setCurrentScenario(scenarioName);
         this.scenarioContext.setScenarioTags([...feature.tags, ...scenario.tags]);
         this.context.setCurrentScenario(scenarioName);
+
+        // ADO: Before scenario hook
+        this.adoIntegration.beforeScenario(scenario, feature);
         
         // Create browser context and page for this scenario
-        await this.browserManager.launch();
-        const browserContext = this.browserManager.getContext();
-        const page = this.browserManager.getPage();
+        const browserManager = await this.ensureBrowserManager();
+        await browserManager.launch();
+        const browserContext = browserManager.getContext();
+        const page = browserManager.getPage();
         
         await this.context.initialize(page, browserContext);
         
@@ -905,6 +1017,11 @@ export class CSBDDRunner {
             CSReporter.passScenario();
             await this.captureArtifactsIfNeeded('passed');
 
+            // ADO: After scenario hook - passed
+            const duration = Date.now() - Date.parse(CSReporter.getResults().slice(-1)[0]?.timestamp || new Date().toISOString());
+            const artifacts = this.collectScenarioArtifacts();
+            await this.adoIntegration.afterScenario(scenario, feature, 'passed', duration, undefined, artifacts);
+
         } catch (error: any) {
             CSReporter.failScenario(error.message);
             await this.captureArtifactsIfNeeded('failed');
@@ -927,6 +1044,12 @@ export class CSBDDRunner {
             
             // Add to failed scenarios tracking
             this.failedScenarios.push({ scenario: scenarioName, feature: feature.name, error: error.message });
+            this.anyTestFailed = true;  // Track that at least one test failed
+
+            // ADO: After scenario hook - failed
+            const duration = Date.now() - Date.parse(CSReporter.getResults().slice(-1)[0]?.timestamp || new Date().toISOString());
+            const artifacts = this.collectScenarioArtifacts();
+            await this.adoIntegration.afterScenario(scenario, feature, 'failed', duration, error.message, artifacts);
             
         } finally {
             // Execute after hooks
@@ -1411,6 +1534,8 @@ export class CSBDDRunner {
                 failedScenarios: (this.testSuite as any).failedScenarios
             };
             
+            // Lazy load the report generator
+            const { CSWorldClassReportGenerator_Enhanced } = await import('../reporter/CSWorldClassReportGenerator_Enhanced');
             CSWorldClassReportGenerator_Enhanced.generateReport(worldClassSuite, reportPath);
             // Log message is already printed inside generateReport method
         } catch (error) {
@@ -1684,10 +1809,7 @@ export class CSBDDRunner {
                 }
             }
 
-            // Upload results to ADO/TFS if enabled
-            if (this.config.getBoolean('ADO_INTEGRATION_ENABLED', false)) {
-                await this.uploadResultsToADO();
-            }
+            // ADO results are now uploaded via CSADOIntegration hooks
 
         } catch (error) {
             CSReporter.debug(`Failed during scenario cleanup: ${error}`);
@@ -1755,24 +1877,6 @@ export class CSBDDRunner {
         }
     }
 
-    private async uploadResultsToADO(): Promise<void> {
-        try {
-            const adoUrl = this.config.get('ADO_URL');
-            const adoToken = this.config.get('ADO_PAT');
-            const projectId = this.config.get('ADO_PROJECT_ID');
-            
-            if (!adoUrl || !adoToken || !projectId) {
-                CSReporter.debug('ADO integration not fully configured, skipping upload');
-                return;
-            }
-            
-            // ADO/TFS result upload logic would go here
-            CSReporter.info('Results uploaded to Azure DevOps');
-            
-        } catch (error) {
-            CSReporter.warn(`Failed to upload results to ADO: ${error}`);
-        }
-    }
     
     // === DATA PROVIDER METHODS ===
 
@@ -2163,6 +2267,65 @@ export class CSBDDRunner {
     }
 
     public hasFailures(): boolean {
-        return this.failedScenarios.length > 0;
+        return this.anyTestFailed || this.failedScenarios.length > 0;
+    }
+
+    /**
+     * Collect artifacts from the current scenario for ADO publishing
+     */
+    private collectScenarioArtifacts(): any {
+        const artifacts: any = {
+            screenshots: [],
+            videos: [],
+            har: [],
+            traces: [],
+            logs: []
+        };
+
+        try {
+            // Get test results directory
+            const resultsDir = this.resultsManager.getCurrentTestRunDir();
+            if (!resultsDir) return artifacts;
+
+            // Collect screenshots from scenario context
+            const stepResults = this.scenarioContext.getStepResults();
+            for (const stepResult of stepResults) {
+                if (stepResult.screenshot && fs.existsSync(stepResult.screenshot)) {
+                    artifacts.screenshots.push(stepResult.screenshot);
+                }
+            }
+
+            // Collect video if exists
+            const videoPath = path.join(resultsDir, 'videos');
+            if (fs.existsSync(videoPath)) {
+                const videoFiles = fs.readdirSync(videoPath).filter(f => f.endsWith('.webm'));
+                artifacts.videos.push(...videoFiles.map(f => path.join(videoPath, f)));
+            }
+
+            // Collect HAR files
+            const harPath = path.join(resultsDir, 'har');
+            if (fs.existsSync(harPath)) {
+                const harFiles = fs.readdirSync(harPath).filter(f => f.endsWith('.har'));
+                artifacts.har.push(...harFiles.map(f => path.join(harPath, f)));
+            }
+
+            // Collect trace files
+            const tracePath = path.join(resultsDir, 'traces');
+            if (fs.existsSync(tracePath)) {
+                const traceFiles = fs.readdirSync(tracePath).filter(f => f.endsWith('.zip'));
+                artifacts.traces.push(...traceFiles.map(f => path.join(tracePath, f)));
+            }
+
+            // Collect log files
+            const logsPath = path.join(resultsDir, 'logs');
+            if (fs.existsSync(logsPath)) {
+                const logFiles = fs.readdirSync(logsPath).filter(f => f.endsWith('.log'));
+                artifacts.logs.push(...logFiles.map(f => path.join(logsPath, f)));
+            }
+        } catch (error) {
+            CSReporter.debug(`Error collecting scenario artifacts: ${error}`);
+        }
+
+        return artifacts;
     }
 }

@@ -38,6 +38,7 @@ interface ResultMessage {
     startTime?: Date;
     endTime?: Date;
     testData?: any;  // Add test data for data-driven scenarios
+    adoMetadata?: any;  // ADO metadata for test case mapping
 }
 
 class WorkerProcess {
@@ -46,6 +47,7 @@ class WorkerProcess {
     private browserManager: any;
     private scenarioCountForReuse: number = 0;
     private anyTestFailed: boolean = false;  // Track if any test failed for HAR decision
+    private adoIntegration: any;
 
     constructor() {
         this.workerId = parseInt(process.env.WORKER_ID || '0');
@@ -78,6 +80,10 @@ class WorkerProcess {
 
             // Initialize browser manager (but don't launch browser yet)
             this.browserManager = CSBrowserManager.getInstance();
+
+            // Initialize ADO integration if enabled
+            const { CSADOIntegration } = require('../ado/CSADOIntegration');
+            this.adoIntegration = CSADOIntegration.getInstance();
 
             console.log(`[Worker ${this.workerId}] Initialization complete`);
         } catch (error) {
@@ -140,6 +146,8 @@ class WorkerProcess {
             const { CSBDDRunner } = require('../bdd/CSBDDRunner');
             const { CSConfigurationManager } = require('../core/CSConfigurationManager');
             const { CSBrowserManager } = require('../browser/CSBrowserManager');
+            const { CSADOIntegration } = require('../ado/CSADOIntegration');
+            const { CSADOTagExtractor } = require('../ado/CSADOTagExtractor');
 
             // Set up configuration
             const configManager = CSConfigurationManager.getInstance();
@@ -197,6 +205,13 @@ class WorkerProcess {
             if (logPath) {
                 result.artifacts = result.artifacts || { screenshots: [], videos: [] };
                 result.artifacts.logs = [logPath];
+            }
+
+            // Extract ADO metadata if integration is enabled
+            if (configManager.getBoolean('ADO_INTEGRATION_ENABLED', false)) {
+                const tagExtractor = CSADOTagExtractor.getInstance();
+                const adoMetadata = tagExtractor.extractMetadata(message.scenario, message.feature);
+                result.adoMetadata = adoMetadata;
             }
 
         } catch (error: any) {
