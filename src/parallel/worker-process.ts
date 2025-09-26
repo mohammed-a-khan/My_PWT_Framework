@@ -53,7 +53,37 @@ class WorkerProcess {
 
         this.setupProcessHandlers();
 
-        // Send ready message after a small delay to ensure IPC is ready
+        // Initialize worker asynchronously
+        this.initializeWorker();
+    }
+
+    private async initializeWorker() {
+        try {
+            // Preload critical modules
+            console.log(`[Worker ${this.workerId}] Preloading modules...`);
+            const { CSBDDRunner } = require('../bdd/CSBDDRunner');
+            const { CSConfigurationManager } = require('../core/CSConfigurationManager');
+            const { CSBrowserManager } = require('../browser/CSBrowserManager');
+
+            // Initialize BDD runner
+            this.bddRunner = CSBDDRunner.getInstance();
+
+            // If PROJECT is already set, preload those step definitions
+            const project = process.env.PROJECT;
+            if (project) {
+                console.log(`[Worker ${this.workerId}] Preloading steps for project: ${project}`);
+                await this.bddRunner.loadProjectSteps(project);
+            }
+
+            // Initialize browser manager (but don't launch browser yet)
+            this.browserManager = CSBrowserManager.getInstance();
+
+            console.log(`[Worker ${this.workerId}] Initialization complete`);
+        } catch (error) {
+            console.error(`[Worker ${this.workerId}] Failed to initialize:`, error);
+        }
+
+        // Send ready message after initialization
         process.nextTick(() => {
             this.sendMessage({ type: 'ready', workerId: this.workerId });
         });
@@ -71,6 +101,12 @@ class WorkerProcess {
 
     private async handleMessage(message: any) {
         switch (message.type) {
+            case 'init':
+                // Handle initialization data from orchestrator
+                if (message.project && this.bddRunner) {
+                    await this.bddRunner.loadProjectSteps(message.project);
+                }
+                break;
             case 'execute':
                 await this.executeScenario(message as ExecuteMessage);
                 break;
@@ -113,9 +149,11 @@ class WorkerProcess {
             // Create runner and browser manager if not already created
             if (!this.bddRunner) {
                 this.bddRunner = CSBDDRunner.getInstance();
-                // Load step definitions for the project
-                await this.bddRunner.loadProjectSteps(message.config.project || message.config.PROJECT);
             }
+
+            // Load step definitions for the project if not already loaded
+            // This should be fast if already loaded in initializeWorker
+            await this.bddRunner.loadProjectSteps(message.config.project || message.config.PROJECT);
 
             // Initialize browser manager if needed
             if (!this.browserManager) {

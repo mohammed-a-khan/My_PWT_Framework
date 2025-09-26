@@ -28,11 +28,14 @@ export class CSCrossDomainNavigationHandler {
     private navigationTimeout: number = 60000;
     private redirectCount: number = 0;
 
+    private handlersSetup: boolean = false;
+
     constructor(page: Page) {
         this.page = page;
         this.config = CSConfigurationManager.getInstance();
         this.loadConfiguration();
-        this.setupNavigationHandlers();
+        // Don't setup handlers immediately - wait to see if we actually need them
+        // this.setupNavigationHandlers();
     }
 
     /**
@@ -77,9 +80,15 @@ export class CSCrossDomainNavigationHandler {
     }
 
     /**
-     * Setup event handlers for navigation tracking
+     * Setup event handlers for navigation tracking (lazy - only when needed)
      */
     private setupNavigationHandlers(): void {
+        if (this.handlersSetup) {
+            return; // Already setup
+        }
+
+        this.handlersSetup = true;
+        CSReporter.debug('Setting up cross-domain navigation handlers');
         // Track frame navigation events
         this.page.on('framenavigated', async (frame: Frame) => {
             if (frame === this.page.mainFrame()) {
@@ -130,6 +139,11 @@ export class CSCrossDomainNavigationHandler {
         // Skip if URL is blank or about:blank
         if (!currentUrl || currentUrl === 'about:blank') {
             return;
+        }
+
+        // Lazy setup handlers if we detect potential cross-domain navigation
+        if (!this.handlersSetup && this.originalDomain && currentDomain !== this.originalDomain) {
+            this.setupNavigationHandlers();
         }
 
         // Check if we've returned to original domain after authentication
@@ -316,6 +330,20 @@ export class CSCrossDomainNavigationHandler {
     }
 
     /**
+     * Check if handlers should be activated based on navigation
+     */
+    private shouldActivateHandlers(targetUrl: string): boolean {
+        if (this.handlersSetup) return false; // Already setup
+
+        const targetDomain = this.extractDomain(targetUrl);
+        const currentDomain = this.extractDomain(this.page.url());
+
+        // Only activate if we're navigating to a different domain OR
+        // if the URL contains auth-related keywords
+        return (targetDomain !== currentDomain) || this.isAuthenticationPage(targetUrl);
+    }
+
+    /**
      * Set the target domain for navigation
      */
     public setTargetDomain(url: string): void {
@@ -354,7 +382,14 @@ export class CSCrossDomainNavigationHandler {
         }
 
         const currentUrl = this.page.url();
+        const currentDomain = this.extractDomain(currentUrl);
         CSReporter.debug(`Current URL after navigation: ${currentUrl}`);
+
+        // Smart activation: only setup handlers if we detect cross-domain or auth redirect
+        if (!this.handlersSetup && currentDomain !== targetDomain) {
+            CSReporter.info('Cross-domain navigation detected, activating handlers');
+            this.setupNavigationHandlers();
+        }
 
         // Check if we're on authentication page
         if (currentUrl !== 'about:blank' && this.isAuthenticationPage(currentUrl)) {
@@ -395,6 +430,12 @@ export class CSCrossDomainNavigationHandler {
 
             // Check if redirected to authentication page
             if (this.isAuthenticationPage(currentUrl)) {
+                // Lazy activate handlers when auth detected
+                if (!this.handlersSetup) {
+                    CSReporter.info('Authentication page detected, activating handlers');
+                    this.setupNavigationHandlers();
+                }
+
                 CSReporter.info(`Redirected to authentication page: ${currentUrl}`);
                 this.isNavigating = true;
 
@@ -436,6 +477,14 @@ export class CSCrossDomainNavigationHandler {
         this.isNavigating = false;
         this.navigationPromise = null;
         this.redirectCount = 0;
+        // Don't reset handlersSetup - keep handlers if already setup
         CSReporter.debug('Cross-domain navigation handler reset');
+    }
+
+    /**
+     * Check if handlers are currently active
+     */
+    public areHandlersActive(): boolean {
+        return this.handlersSetup;
     }
 }

@@ -245,12 +245,16 @@ export class ParallelOrchestrator {
         return new Promise((resolve, reject) => {
             CSReporter.debug(`Creating worker ${id}`);
 
+            // Get project info from config to pass to worker for early initialization
+            const project = this.config.get('PROJECT') || this.config.get('project') || 'common';
+
             const workerProcess = fork(script, [], {
                 execArgv: ['-r', 'ts-node/register'],
                 env: {
                     ...process.env,
                     WORKER_ID: String(id),
-                    TS_NODE_TRANSPILE_ONLY: 'true'
+                    TS_NODE_TRANSPILE_ONLY: 'true',
+                    PROJECT: project  // Pass project for early step loading
                 },
                 silent: false
             });
@@ -287,10 +291,10 @@ export class ParallelOrchestrator {
             };
             workerProcess.on('message', onReady);
 
-            // Timeout if worker doesn't respond
+            // Timeout if worker doesn't respond - increased to 30s for slower systems
             setTimeout(() => {
                 reject(new Error(`Worker ${id} failed to start`));
-            }, 10000);
+            }, 30000);
         });
     }
 
