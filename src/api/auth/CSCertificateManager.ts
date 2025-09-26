@@ -49,8 +49,7 @@ export class CSCertificateManager {
         this.certificates = new Map();
         this.trustedCAs = new Set();
         this.validationCache = new Map();
-        // Lazy load system CAs only when needed
-        // this.loadSystemCAs();
+        // DO NOT load system CAs - only load specific certificates when needed
     }
 
     public static getInstance(): CSCertificateManager {
@@ -60,30 +59,13 @@ export class CSCertificateManager {
         return CSCertificateManager.instance;
     }
 
-    private loadSystemCAs(): void {
-        // Only load system CAs when explicitly needed (lazy loading)
-        if (this.trustedCAs.size > 0) {
-            return; // Already loaded
-        }
-
-        try {
-            const systemCAs = tls.rootCertificates;
-            if (systemCAs) {
-                systemCAs.forEach(ca => this.trustedCAs.add(ca));
-                CSReporter.debug(`Loaded ${systemCAs.length} system CA certificates on demand`);
-            }
-        } catch (error) {
-            CSReporter.warn(`Failed to load system CAs: ${(error as Error).message}`);
-        }
-    }
+    // REMOVED: We don't need to load ALL system CAs
+    // Only load specific certificates that the user provides for their API testing
 
     public async loadCertificate(name: string, config: CSCertificateConfig): Promise<void> {
         try {
-            // Load system CAs only when actually loading a certificate
-            if (config.ca || config.rejectUnauthorized !== false) {
-                this.loadSystemCAs();
-            }
-
+            // Only process the specific certificate provided by the user
+            // No need to load ALL system CAs
             const processedConfig = await this.processCertificateConfig(config);
             this.certificates.set(name, processedConfig);
             CSReporter.info(`Certificate loaded: ${name}`);
@@ -328,7 +310,9 @@ ${Buffer.from(publicKey).toString('base64')}
 
         return {
             ...config,
-            ca: config?.ca || Array.from(this.trustedCAs)
+            // Only use user-provided CAs, not system CAs
+            // If no CAs provided, let Node.js use its default behavior
+            ca: config?.ca || (this.trustedCAs.size > 0 ? Array.from(this.trustedCAs) : undefined)
         };
     }
 
