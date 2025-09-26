@@ -11,7 +11,7 @@ export abstract class CSBasePage {
     protected browserManager: CSBrowserManager;
     protected url: string = '';
     protected elements: Map<string, CSWebElement> = new Map();
-    private crossDomainHandler?: CSCrossDomainNavigationHandler;
+    private static crossDomainHandlers: Map<Page, CSCrossDomainNavigationHandler> = new Map();
 
     constructor() {
         this.config = CSConfigurationManager.getInstance();
@@ -30,23 +30,39 @@ export abstract class CSBasePage {
     protected abstract initializeElements(): void;
 
     /**
-     * Initialize cross-domain navigation handler if enabled
+     * Initialize cross-domain navigation handler if enabled (reuse existing for same page)
      */
     private initializeCrossDomainHandler(): void {
         if (this.config.getBoolean('CROSS_DOMAIN_NAVIGATION_ENABLED', true)) {
-            this.crossDomainHandler = new CSCrossDomainNavigationHandler(this.page);
-            CSReporter.debug('Cross-domain navigation handler initialized');
+            // Reuse existing handler for the same page instance
+            if (!CSBasePage.crossDomainHandlers.has(this.page)) {
+                const handler = new CSCrossDomainNavigationHandler(this.page);
+                CSBasePage.crossDomainHandlers.set(this.page, handler);
+                CSReporter.debug('Cross-domain navigation handler initialized');
+            }
         }
+    }
+
+    /**
+     * Get the cross-domain handler for current page
+     */
+    private getCrossDomainHandler(): CSCrossDomainNavigationHandler | undefined {
+        if (this.config.getBoolean('CROSS_DOMAIN_NAVIGATION_ENABLED', true)) {
+            return CSBasePage.crossDomainHandlers.get(this.page);
+        }
+        return undefined;
     }
     
     public async navigate(url?: string): Promise<void> {
         const targetUrl = url || this.url || this.config.get('BASE_URL');
         CSReporter.info(`Navigating to: ${targetUrl}`);
 
+        const crossDomainHandler = this.getCrossDomainHandler();
+
         // Set up cross-domain handler if enabled
-        if (this.crossDomainHandler) {
-            this.crossDomainHandler.setTargetDomain(targetUrl);
-            this.crossDomainHandler.setOriginalDomain(targetUrl);
+        if (crossDomainHandler) {
+            crossDomainHandler.setTargetDomain(targetUrl);
+            crossDomainHandler.setOriginalDomain(targetUrl);
         }
 
         // Navigate to the URL
@@ -56,14 +72,14 @@ export abstract class CSBasePage {
         });
 
         // Handle potential authentication redirect
-        if (this.crossDomainHandler) {
+        if (crossDomainHandler) {
             // Check if we're being redirected to authentication
-            await this.crossDomainHandler.handleInitialAuthRedirect(targetUrl);
+            await crossDomainHandler.handleInitialAuthRedirect(targetUrl);
 
             // If we're in cross-domain navigation, wait for it to complete
-            if (this.crossDomainHandler.isInCrossDomainNavigation()) {
+            if (crossDomainHandler.isInCrossDomainNavigation()) {
                 CSReporter.info('Detected cross-domain authentication redirect, waiting for completion...');
-                await this.crossDomainHandler.forceWaitForNavigation();
+                await crossDomainHandler.forceWaitForNavigation();
             }
         } else {
             // Fallback to regular wait for load
@@ -146,9 +162,10 @@ export abstract class CSBasePage {
      * Wait for any ongoing cross-domain navigation to complete
      */
     public async waitForCrossDomainNavigation(): Promise<void> {
-        if (this.crossDomainHandler && this.crossDomainHandler.isInCrossDomainNavigation()) {
+        const crossDomainHandler = this.getCrossDomainHandler();
+        if (crossDomainHandler && crossDomainHandler.isInCrossDomainNavigation()) {
             CSReporter.info('Waiting for cross-domain navigation to complete...');
-            await this.crossDomainHandler.handleCrossDomainNavigation();
+            await crossDomainHandler.handleCrossDomainNavigation();
         }
     }
 
@@ -156,8 +173,9 @@ export abstract class CSBasePage {
      * Get cross-domain navigation state
      */
     public getCrossDomainNavigationState(): any {
-        if (this.crossDomainHandler) {
-            return this.crossDomainHandler.getNavigationState();
+        const crossDomainHandler = this.getCrossDomainHandler();
+        if (crossDomainHandler) {
+            return crossDomainHandler.getNavigationState();
         }
         return null;
     }
@@ -166,8 +184,9 @@ export abstract class CSBasePage {
      * Reset cross-domain handler (useful when switching between tests)
      */
     public resetCrossDomainHandler(): void {
-        if (this.crossDomainHandler) {
-            this.crossDomainHandler.reset();
+        const crossDomainHandler = this.getCrossDomainHandler();
+        if (crossDomainHandler) {
+            crossDomainHandler.reset();
         }
     }
 
@@ -175,10 +194,13 @@ export abstract class CSBasePage {
      * Update page reference (useful after browser restart or context switch)
      */
     public updatePageReference(newPage: Page): void {
+        const oldPage = this.page;
         this.page = newPage;
-        // Reinitialize cross-domain handler with new page
+        // Remove old handler and create new one for new page
         if (this.config.getBoolean('CROSS_DOMAIN_NAVIGATION_ENABLED', true)) {
-            this.crossDomainHandler = new CSCrossDomainNavigationHandler(this.page);
+            CSBasePage.crossDomainHandlers.delete(oldPage);
+            const handler = new CSCrossDomainNavigationHandler(this.page);
+            CSBasePage.crossDomainHandlers.set(this.page, handler);
             CSReporter.debug('Cross-domain handler reinitialized with new page');
         }
     }

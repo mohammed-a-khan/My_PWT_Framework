@@ -34,7 +34,8 @@ export class CSBrowserManager {
         // Check if running in worker thread
         if (typeof process !== 'undefined' && process.env.WORKER_ID) {
             this.isWorkerThread = true;
-            this.workerId = parseInt(process.env.WORKER_ID);
+            this.workerId = parseInt(process.env.WORKER_ID) || 0;
+            CSReporter.debug(`BrowserManager initialized for worker ${this.workerId} (raw: ${process.env.WORKER_ID})`);
         }
     }
 
@@ -249,8 +250,10 @@ export class CSBrowserManager {
         // Add HAR recording if enabled
         const harCaptureMode = this.config.get('HAR_CAPTURE_MODE', 'never').toLowerCase();
         const harEnabledFlag = this.config.getBoolean('BROWSER_HAR_ENABLED', false);
-        const harEnabled = harEnabledFlag && harCaptureMode !== 'never';
-        CSReporter.debug(`HAR recording configured: ${harEnabled} (mode: ${harCaptureMode}, enabled: ${harEnabledFlag})`);
+        // HAR is enabled if either the flag is set OR capture mode is not 'never'
+        const harEnabled = harEnabledFlag || harCaptureMode !== 'never';
+        CSReporter.debug(`HAR recording configured: ${harEnabled} (mode: ${harCaptureMode}, enabled flag: ${harEnabledFlag})`);
+
         if (harEnabled) {
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const uniqueId = this.isWorkerThread ? `w${this.workerId}` : 'main';
@@ -559,6 +562,7 @@ export class CSBrowserManager {
             CSReporter.debug(`Failed to restart trace: ${error}`);
         }
     }
+
 
     public async closeBrowser(): Promise<void> {
         if (this.browser) {

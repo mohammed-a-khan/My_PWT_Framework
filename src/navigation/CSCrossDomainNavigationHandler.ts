@@ -95,14 +95,26 @@ export class CSCrossDomainNavigationHandler {
         // Track response events for redirect detection
         this.page.on('response', async (response) => {
             if (response.status() >= 300 && response.status() < 400) {
-                this.redirectCount++;
+                const currentUrl = response.url();
                 const location = response.headers()['location'];
-                if (location) {
-                    CSReporter.debug(`Redirect detected to: ${location}`);
 
-                    if (this.redirectCount > this.maxRedirectCount) {
-                        CSReporter.warn(`Max redirect count (${this.maxRedirectCount}) exceeded`);
+                // Only track actual cross-domain redirects (different domains)
+                if (location) {
+                    const currentDomain = this.extractDomain(currentUrl);
+                    const redirectDomain = this.extractDomain(location);
+
+                    // Only log if it's ACTUALLY a different domain
+                    if (currentDomain && redirectDomain && currentDomain !== redirectDomain) {
+                        this.redirectCount++;
+                        CSReporter.debug(`Cross-domain redirect: ${currentDomain} -> ${redirectDomain}`);
+
+                        if (this.redirectCount > this.maxRedirectCount) {
+                            CSReporter.warn(`Max cross-domain redirect count (${this.maxRedirectCount}) exceeded`);
+                            // Reset counter to prevent spam
+                            this.redirectCount = 0;
+                        }
                     }
+                    // Don't log same-domain redirects - they're completely normal!
                 }
             }
         });
@@ -181,6 +193,14 @@ export class CSCrossDomainNavigationHandler {
      */
     private extractDomain(url: string): string {
         try {
+            // Handle relative URLs by using the page's current origin
+            if (url && !url.startsWith('http')) {
+                const currentUrl = this.page.url();
+                if (currentUrl && currentUrl !== 'about:blank') {
+                    const baseUrl = new URL(currentUrl);
+                    url = new URL(url, baseUrl.origin).href;
+                }
+            }
             const urlObj = new URL(url);
             return urlObj.hostname;
         } catch {
@@ -205,8 +225,8 @@ export class CSCrossDomainNavigationHandler {
                 return;
             }
 
-            // Check if still on authentication page
-            if (this.isAuthenticationPage(this.page.url())) {
+            // Only log occasionally to avoid spam
+            if (this.isAuthenticationPage(this.page.url()) && (Date.now() - startTime) % 5000 < 500) {
                 CSReporter.debug('Still on authentication page, waiting...');
             }
 

@@ -49,7 +49,8 @@ export class CSCertificateManager {
         this.certificates = new Map();
         this.trustedCAs = new Set();
         this.validationCache = new Map();
-        this.loadSystemCAs();
+        // Lazy load system CAs only when needed
+        // this.loadSystemCAs();
     }
 
     public static getInstance(): CSCertificateManager {
@@ -60,12 +61,16 @@ export class CSCertificateManager {
     }
 
     private loadSystemCAs(): void {
-        // Load system CA certificates if available
+        // Only load system CAs when explicitly needed (lazy loading)
+        if (this.trustedCAs.size > 0) {
+            return; // Already loaded
+        }
+
         try {
             const systemCAs = tls.rootCertificates;
             if (systemCAs) {
                 systemCAs.forEach(ca => this.trustedCAs.add(ca));
-                CSReporter.debug(`Loaded ${systemCAs.length} system CA certificates`);
+                CSReporter.debug(`Loaded ${systemCAs.length} system CA certificates on demand`);
             }
         } catch (error) {
             CSReporter.warn(`Failed to load system CAs: ${(error as Error).message}`);
@@ -74,6 +79,11 @@ export class CSCertificateManager {
 
     public async loadCertificate(name: string, config: CSCertificateConfig): Promise<void> {
         try {
+            // Load system CAs only when actually loading a certificate
+            if (config.ca || config.rejectUnauthorized !== false) {
+                this.loadSystemCAs();
+            }
+
             const processedConfig = await this.processCertificateConfig(config);
             this.certificates.set(name, processedConfig);
             CSReporter.info(`Certificate loaded: ${name}`);
