@@ -6,6 +6,7 @@ import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
+import { CSValueResolver } from '../utils/CSValueResolver';
 
 const parseXML = promisify(parseString);
 
@@ -363,21 +364,26 @@ export class CSDataProvider {
     private processDynamicValues(data: DataRow[]): DataRow[] {
         return data.map(row => {
             const processedRow: DataRow = {};
-            
+
             Object.keys(row).forEach(key => {
                 let value = row[key];
-                
-                // Process dynamic placeholders
+
+                // Process string values for decryption and dynamic placeholders
                 if (typeof value === 'string') {
+                    // AUTOMATIC DECRYPTION: Decrypt encrypted values first
+                    // This ensures test data with encrypted passwords/tokens are automatically decrypted
+                    value = CSValueResolver.resolve(value);
+
+                    // Then process dynamic placeholders
                     // Replace <random> placeholder
                     value = value.replace(/<random>/g, () => this.dynamicGenerators.get('random')!());
-                    
+
                     // Replace <timestamp> placeholder
                     value = value.replace(/<timestamp>/g, () => this.dynamicGenerators.get('timestamp')!());
-                    
+
                     // Replace <uuid> placeholder
                     value = value.replace(/<uuid>/g, () => this.dynamicGenerators.get('uuid')!());
-                    
+
                     // Replace <config:KEY> placeholders
                     value = value.replace(/<config:([^>]+)>/g, (match: string, configKey: string) => {
                         return this.config.get(configKey, match);

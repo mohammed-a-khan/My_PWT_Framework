@@ -7,15 +7,17 @@ A comprehensive test automation framework built on Playwright with TypeScript, f
 ## ✨ Key Features
 
 - **⚡ Lightning-Fast Startup** - Framework starts in <1 second with selective module loading
-- **🔧 Zero Hardcoding** - Everything configurable through hierarchical configuration files  
+- **🔧 Zero Hardcoding** - Everything configurable through hierarchical configuration files
 - **🤖 Self-Healing Elements** - Automatic fallback strategies when elements change
 - **🧠 AI-Powered Testing** - Visual element recognition and smart test suggestions
+- **🔐 Automatic Encryption/Decryption** - Transparent handling of encrypted values in tests and data
 - **📊 Real-Time Dashboard** - Live test execution monitoring with WebSocket
 - **🔄 Multi-Browser Support** - Chrome, Firefox, Safari, Edge with switching capabilities
-- **📦 Data-Driven Testing** - Excel, CSV, JSON, API, Database data providers
+- **📦 Data-Driven Testing** - Excel, CSV, JSON, API, Database data providers with auto-decryption
 - **🔗 Azure DevOps Integration** - Test sync, bug creation, proxy support
 - **📸 Evidence Collection** - Screenshots, videos, HAR files, console logs
 - **🏊 Browser Pool Management** - Efficient parallel execution
+- **🔑 Automatic Value Resolution** - Variables and encrypted values resolved transparently
 
 ## 📋 Prerequisites
 
@@ -369,6 +371,87 @@ npm run test -- --debug=true --headless=false
 # Verbose logging
 npm run test -- --log-level=debug
 ```
+
+## 🔐 Automatic Encryption & Value Resolution
+
+The framework provides **transparent automatic resolution** for encrypted values and variables throughout your tests.
+
+### Key Features
+
+- **Automatic Decryption** - Values with `ENCRYPTED:` prefix are automatically decrypted
+- **Variable Substitution** - Multiple patterns with clear distinction between sources
+- **Zero Manual Handling** - Step definitions receive fully resolved values
+- **Works Everywhere** - Feature files, test data (CSV/JSON/Excel), configuration files
+
+### Variable Resolution Patterns
+
+| Pattern | Source | Example | Description |
+|---------|--------|---------|-------------|
+| `{{variable}}` | Test context | `{{userId}}` | Variables saved during test |
+| `$variable` | Test context | `$username` | Alternative syntax for test vars |
+| `{{config:KEY}}` | Config files | `{{config:API_TOKEN}}` | From .env files |
+| `{{env:VAR}}` | Environment | `{{env:HOME}}` | OS environment variables |
+
+### Quick Examples
+
+#### In Feature Files
+```gherkin
+# Automatic decryption
+Given user sets password to "ENCRYPTED:U2FsdGVkX1+abc123..."
+
+# Test context variables
+Given user saves "john.doe" as "username"
+When user logs in as "{{username}}"
+
+# Configuration values (from .env)
+Given user sets API key to "{{config:API_TOKEN}}"
+
+# Environment variables
+Given user sets proxy to "{{env:HTTP_PROXY}}"
+```
+
+#### No Naming Conflicts
+```gherkin
+# Same name, different sources - no conflicts!
+Given user saves "my-token" as "API_TOKEN"
+When user uses test token "{{API_TOKEN}}"        # -> "my-token" (test var)
+And user uses config token "{{config:API_TOKEN}}" # -> from .env file
+And user uses env token "{{env:API_TOKEN}}"      # -> from OS environment
+```
+
+#### In Test Data (CSV)
+```csv
+username,password,apiKey
+john,ENCRYPTED:U2FsdGVkX1+...,ENCRYPTED:U2FsdGVkX1+...
+```
+
+#### In Configuration (.env)
+```bash
+DB_PASSWORD=ENCRYPTED:U2FsdGVkX1+dbpass123...
+API_KEY=ENCRYPTED:U2FsdGVkX1+apikey456...
+```
+
+### Your Step Definitions Stay Clean
+```typescript
+// No manual decryption needed - value is already decrypted!
+@CSBDDStepDef("user sets password {string}")
+async setPassword(password: string): Promise<void> {
+    await this.page.fill('#password', password); // Already decrypted!
+}
+```
+
+### Encrypting Values
+```bash
+# Encrypt a value
+npx cs-encrypt "myPassword"
+# Output: ENCRYPTED:U2FsdGVkX1+...
+```
+
+### 📖 Full Documentation
+
+- [**Automatic Value Resolution Guide**](./AUTOMATIC_VALUE_RESOLUTION_GUIDE.md) - Complete guide with all features
+- [**Quick Reference**](./ENCRYPTION_QUICK_REFERENCE.md) - Quick lookup for common patterns
+- [**Practical Examples**](./test/examples/encryption-examples.feature) - Real-world scenarios
 
 ## 📚 API Documentation
 

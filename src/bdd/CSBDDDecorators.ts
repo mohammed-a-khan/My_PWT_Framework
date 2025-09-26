@@ -3,6 +3,7 @@ import { CSReporter } from '../reporter/CSReporter';
 import { CSBDDContext } from './CSBDDContext';
 import { CSFeatureContext } from './CSFeatureContext';
 import { CSScenarioContext } from './CSScenarioContext';
+import { CSValueResolver } from '../utils/CSValueResolver';
 
 export interface StepDefinitionOptions {
     timeout?: number;
@@ -187,12 +188,24 @@ export async function executeStep(
     const regex = pattern instanceof RegExp ? pattern : new RegExp(`^${pattern}$`);
     const matches = stepText.match(regex);
     const args: any[] = [];
-    
+
     if (matches && matches.length > 1) {
         // Extract captured groups, converting types as needed
         for (let i = 1; i < matches.length; i++) {
             let value = matches[i];
-            // Check if it's a number
+
+            // Remove quotes if present (for string parameters)
+            if (value && value.startsWith('"') && value.endsWith('"')) {
+                value = value.slice(1, -1);
+            }
+
+            // AUTOMATIC RESOLUTION: Apply decryption and variable substitution
+            // This ensures step definitions receive fully resolved values
+            if (typeof value === 'string') {
+                value = CSValueResolver.resolve(value, context);
+            }
+
+            // Check if it's a number after resolution
             if (/^\d+$/.test(value)) {
                 args.push(parseInt(value, 10));
             } else if (/^\d*\.\d+$/.test(value)) {
@@ -204,8 +217,18 @@ export async function executeStep(
     }
     
     // Add data table or doc string if present
-    if (dataTable) args.push(new DataTable(dataTable));
-    if (docString) args.push(docString);
+    if (dataTable) {
+        // Resolve all values in data table
+        const resolvedDataTable = dataTable.map(row =>
+            row.map(cell => typeof cell === 'string' ? CSValueResolver.resolve(cell, context) : cell)
+        );
+        args.push(new DataTable(resolvedDataTable));
+    }
+    if (docString) {
+        // Resolve doc string
+        const resolvedDocString = CSValueResolver.resolve(docString, context);
+        args.push(resolvedDocString);
+    }
     
     // Execute with retry logic if specified
     const retries = stepDef.options?.retry || 0;

@@ -81,19 +81,64 @@ export class CSBDDContext {
         this.worldData.set(key, value);
         CSReporter.debug(`Set world data: ${key}`);
     }
-    
+
     public get<T = any>(key: string): T | undefined {
         return this.worldData.get(key);
     }
-    
+
+    // Alias for get() to support CSValueResolver
+    public getVariable(key: string): any {
+        // Handle special prefixes for clear distinction
+        if (key.startsWith('__config_')) {
+            // Configuration value requested explicitly
+            const configKey = key.substring(9); // Remove '__config_' prefix
+            return this.config.get(configKey);
+        }
+
+        if (key.startsWith('__env_')) {
+            // Environment variable requested explicitly
+            const envKey = key.substring(6); // Remove '__env_' prefix
+            return process.env[envKey];
+        }
+
+        // For regular variables, check contexts only (NOT configuration)
+        // This provides clear separation between test variables and config
+
+        // First check world data (highest priority - test-specific variables)
+        if (this.worldData.has(key)) {
+            return this.worldData.get(key);
+        }
+
+        // Then check scenario context
+        const scenarioVar = this.scenarioContext.getVariable(key);
+        if (scenarioVar !== undefined) {
+            return scenarioVar;
+        }
+
+        // Finally check feature context
+        const featureVar = this.featureContext.getVariable(key);
+        if (featureVar !== undefined) {
+            return featureVar;
+        }
+
+        // Return undefined if not found in any context
+        // NOTE: We do NOT check configuration here to avoid naming conflicts
+        return undefined;
+    }
+
+    // Set variable (alias for set)
+    public setVariable(key: string, value: any): void {
+        this.set(key, value);
+    }
+
     public has(key: string): boolean {
         return this.worldData.has(key);
     }
-    
+
     public delete(key: string): boolean {
         return this.worldData.delete(key);
     }
-    
+
     public clear(): void {
         this.worldData.clear();
     }

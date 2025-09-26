@@ -46,7 +46,12 @@ export class CSFeatureContext {
     public get<T = any>(key: string): T | undefined {
         return this.data.get(key);
     }
-    
+
+    // Alias for get() to support CSBDDContext
+    public getVariable(key: string): any {
+        return this.data.get(key);
+    }
+
     public has(key: string): boolean {
         return this.data.has(key);
     }

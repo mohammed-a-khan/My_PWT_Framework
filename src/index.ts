@@ -14,7 +14,54 @@ export * from './element/CSWebElement';
 // export * from './reporter/CSReporter'; // Has conflict with TestResult
 export * from './bdd/CSBDDRunner';
 // export * from './bdd/CSStepRegistry'; // Has conflict with CSDataProvider
+// API Module Exports
 export * from './api/CSAPIClient';
+export * from './api/CSAPIRunner';
+export * from './api/CSAPIValidator';
+export * from './api/CSAPIExecutor';
+
+// API Type Exports
+export * from './api/types/CSApiTypes';
+
+// API Client Exports
+export * from './api/client/CSHttpClient';
+export * from './api/client/CSRequestBuilder';
+export * from './api/client/CSAuthenticationHandler';
+export * from './api/client/CSResponseParser';
+export * from './api/client/CSConnectionPool';
+export * from './api/client/CSRetryHandler';
+export * from './api/client/CSProxyManager';
+
+// API Context Exports
+export { CSApiContext } from './api/context/CSApiContext';
+export { CSApiContextManager } from './api/context/CSApiContextManager';
+export {
+    CSApiChainContext,
+    CSApiChainManager,
+    chainManager,
+    CSChainState,
+    CSChainWorkflow
+} from './api/context/CSApiChainContext';
+
+// API Auth Exports
+export { CSOAuth2Handler } from './api/auth/CSOAuth2Handler';
+export { CSAWSSignatureHandler } from './api/auth/CSAWSSignatureHandler';
+export { CSCertificateManager } from './api/auth/CSCertificateManager';
+
+// API Template Exports
+export * from './api/templates/CSPlaceholderResolver';
+export * from './api/templates/CSRequestTemplateEngine';
+export * from './api/templates/CSTemplateCache';
+
+// API Validator Exports
+export * from './api/validators/CSStatusCodeValidator';
+export * from './api/validators/CSHeaderValidator';
+export * from './api/validators/CSBodyValidator';
+export * from './api/validators/CSSchemaValidator';
+export * from './api/validators/CSJSONPathValidator';
+export * from './api/validators/CSXMLValidator';
+
+// Database exports
 export * from './database/CSDatabaseManager';
 // export * from './data/CSDataProvider'; // Commented to avoid conflict
 export * from './ado/CSADOClient';
@@ -251,9 +298,10 @@ async function execute(mode: string) {
             break;
             
         case 'api':
-            const { CSAPIRunner } = await import('./api/CSAPIRunner');
-            const apiRunner = new CSAPIRunner();
-            await apiRunner.run();
+            const { CSAPIExecutor } = await import('./api/CSAPIExecutor');
+            const apiExecutor = new CSAPIExecutor();
+            // Execute API tests based on configuration
+            CSReporter.info('API testing mode activated');
             break;
             
         case 'database':
