@@ -336,7 +336,8 @@ export class CSBDDRunner {
             }
 
             // Complete ADO test run AFTER professional report to ensure all artifacts are included in zip
-            await this.adoIntegration.afterAllTests();
+            const adoIntegration = this.ensureADOIntegration();
+            await adoIntegration.afterAllTests();
 
         } catch (error: any) {
             CSReporter.error(`Test execution failed: ${error.message}`);
@@ -554,11 +555,11 @@ export class CSBDDRunner {
         }
 
         // Collect test points from all scenarios before creating test run
-        await this.adoIntegration.collectScenarios(allScenarios);
+        await adoIntegration.collectScenarios(allScenarios);
 
         // Start ADO test run with collected test points
         // Don't pass a name - let ADOPublisher generate one based on feature name
-        await this.adoIntegration.beforeAllTests();
+        await adoIntegration.beforeAllTests();
 
         // Handle different types of parallel values (boolean true, number, etc.)
         let parallel = 1;
@@ -753,7 +754,8 @@ export class CSBDDRunner {
             this.parallelExecutionDone = true;
 
             // Complete ADO test run AFTER all reports are generated to ensure zip includes everything
-            await this.adoIntegration.afterAllTests();
+            const adoIntegration = this.ensureADOIntegration();
+            await adoIntegration.afterAllTests();
 
             CSReporter.info(`Parallel execution completed: ${passed} passed, ${failed} failed, ${skipped} skipped`);
 
@@ -953,15 +955,26 @@ export class CSBDDRunner {
                 const usedColumns = this.findUsedColumnsInScenario(scenario, examples.headers);
                 CSReporter.info(`📊 Data-driven test using ${usedColumns.size} of ${examples.headers.length} columns: ${Array.from(usedColumns).join(', ')}`);
 
+                const adoIntegration = this.ensureADOIntegration();
+                const dataDrivenResults: any[] = [];
+
                 let iterationNumber = 1;
                 for (const row of examples.rows) {
-                    await this.executeSingleScenario(scenario, feature, options, row, examples.headers, iterationNumber, examples.rows.length, scenario.examples, usedColumns);
+                    // Execute single scenario but collect result instead of publishing immediately
+                    const result = await this.executeSingleScenarioForDataDriven(scenario, feature, options, row, examples.headers, iterationNumber, examples.rows.length, scenario.examples, usedColumns);
+                    dataDrivenResults.push(result);
                     iterationNumber++;
                 }
 
-                // After all iterations, trigger ADO to publish aggregated results
-                // Call afterScenario without iteration to signal completion of all iterations
-                await this.adoIntegration.afterScenario(scenario, feature, 'completed', 0);
+                // After all iterations, trigger ADO to publish aggregated results like parallel mode
+                if (adoIntegration.getPublisher().isEnabled()) {
+                    // Add all results to publisher for aggregation
+                    for (const result of dataDrivenResults) {
+                        adoIntegration.getPublisher().addScenarioResult(result);
+                    }
+                    // Trigger aggregated publishing
+                    await adoIntegration.afterScenario(scenario, feature, 'completed', 0);
+                }
             } else {
                 CSReporter.warn(`No data rows for scenario: ${scenario.name}`);
             }
@@ -970,6 +983,147 @@ export class CSBDDRunner {
         }
     }
     
+    // New method for data-driven scenarios that returns result instead of publishing immediately
+    private async executeSingleScenarioForDataDriven(
+        scenario: ParsedScenario,
+        feature: ParsedFeature,
+        options: RunOptions,
+        exampleRow?: string[],
+        exampleHeaders?: string[],
+        iterationNumber?: number,
+        totalIterations?: number,
+        originalExamples?: any,
+        usedColumns?: Set<string>
+    ): Promise<any> {
+        const scenarioStartTime = Date.now();
+        let scenarioName = this.interpolateScenarioName(scenario.name, exampleRow, exampleHeaders);
+
+        // Add iteration number to scenario name for data-driven tests
+        if (iterationNumber && totalIterations && totalIterations > 1) {
+            scenarioName = `${scenarioName}_Iteration-${iterationNumber}`;
+        }
+
+        CSReporter.startScenario(scenarioName);
+        this.scenarioContext.setCurrentScenario(scenarioName);
+        this.scenarioContext.setScenarioTags([...feature.tags, ...scenario.tags]);
+        this.context.setCurrentScenario(scenarioName);
+
+        // Create browser context and page for this scenario
+        const browserManager = await this.ensureBrowserManager();
+        await browserManager.launch();
+        const browserContext = browserManager.getContext();
+        const page = browserManager.getPage();
+
+        await this.context.initialize(page, browserContext);
+
+        try {
+            // Execute before hooks
+            await this.executeHooks('before', [...feature.tags, ...scenario.tags]);
+
+            // Execute background steps if present
+            if (feature.background) {
+                CSReporter.debug(`Executing background with ${feature.background.steps.length} steps`);
+                for (const step of feature.background.steps) {
+                    await this.executeStep(step, options, exampleRow, exampleHeaders);
+                }
+            } else {
+                CSReporter.debug('No background steps to execute');
+            }
+
+            // Execute scenario steps
+            for (const step of scenario.steps) {
+                await this.executeStep(step, options, exampleRow, exampleHeaders);
+            }
+
+            CSReporter.passScenario();
+            await this.captureArtifactsIfNeeded('passed');
+
+            const duration = Date.now() - scenarioStartTime;
+            const artifacts = this.collectScenarioArtifacts();
+
+            // Prepare iteration data
+            let iterationData = exampleRow && exampleHeaders ?
+                Object.fromEntries(exampleHeaders.map((h, i) => [h, exampleRow[i]])) : undefined;
+
+            // Filter iteration data to only include used columns if provided
+            if (iterationData && usedColumns && usedColumns.size > 0) {
+                const filteredData: any = {};
+                for (const [key, value] of Object.entries(iterationData)) {
+                    if (usedColumns.has(key)) {
+                        filteredData[key] = value;
+                    }
+                }
+                iterationData = filteredData;
+            }
+
+            // Return result object instead of calling ADO immediately
+            return {
+                scenario,
+                feature,
+                status: 'passed' as const,
+                duration,
+                artifacts,
+                iteration: iterationNumber,
+                iterationData,
+                name: scenarioName
+            };
+
+        } catch (error: any) {
+            CSReporter.failScenario(error.message);
+            await this.captureArtifactsIfNeeded('failed');
+            await this.captureFailureArtifacts();
+
+            this.failedScenarios.push({ scenario: scenarioName, feature: feature.name, error: error.message });
+            this.anyTestFailed = true;
+
+            const duration = Date.now() - scenarioStartTime;
+            const artifacts = this.collectScenarioArtifacts();
+
+            // Prepare iteration data
+            let iterationData = exampleRow && exampleHeaders ?
+                Object.fromEntries(exampleHeaders.map((h, i) => [h, exampleRow[i]])) : undefined;
+
+            // Filter iteration data to only include used columns if provided
+            if (iterationData && usedColumns && usedColumns.size > 0) {
+                const filteredData: any = {};
+                for (const [key, value] of Object.entries(iterationData)) {
+                    if (usedColumns.has(key)) {
+                        filteredData[key] = value;
+                    }
+                }
+                iterationData = filteredData;
+            }
+
+            // Return failed result object instead of calling ADO immediately
+            return {
+                scenario,
+                feature,
+                status: 'failed' as const,
+                duration,
+                errorMessage: error.message,
+                stackTrace: error.stack,
+                artifacts,
+                iteration: iterationNumber,
+                iterationData,
+                name: scenarioName
+            };
+        } finally {
+            // Execute after hooks and cleanup browser
+            try {
+                await this.executeHooks('after', [...feature.tags, ...scenario.tags]);
+            } catch (hookError) {
+                CSReporter.warn(`After hook failed: ${hookError}`);
+            }
+
+            // Clean up browser context
+            const configManager = CSConfigurationManager.getInstance();
+            if (!configManager.getBoolean('BROWSER_REUSE_ENABLED', false)) {
+                const browserManager = await this.ensureBrowserManager();
+                await browserManager.close();
+            }
+        }
+    }
+
     private async executeSingleScenario(
         scenario: ParsedScenario,
         feature: ParsedFeature,
@@ -997,7 +1151,8 @@ export class CSBDDRunner {
         this.context.setCurrentScenario(scenarioName);
 
         // ADO: Before scenario hook
-        this.adoIntegration.beforeScenario(scenario, feature);
+        const adoIntegration = this.ensureADOIntegration();
+        adoIntegration.beforeScenario(scenario, feature);
         
         // Create browser context and page for this scenario
         const browserManager = await this.ensureBrowserManager();
@@ -1052,7 +1207,7 @@ export class CSBDDRunner {
                 CSReporter.debug(`Filtered iteration data to ${Object.keys(filteredData).length} used columns for ADO`);
             }
 
-            await this.adoIntegration.afterScenario(scenario, feature, 'passed', duration, undefined, artifacts, undefined, iterationNumber, iterationData);
+            await adoIntegration.afterScenario(scenario, feature, 'passed', duration, undefined, artifacts, undefined, iterationNumber, iterationData);
 
         } catch (error: any) {
             CSReporter.failScenario(error.message);
@@ -1102,7 +1257,7 @@ export class CSBDDRunner {
                 CSReporter.debug(`Filtered iteration data to ${Object.keys(filteredData).length} used columns for ADO`);
             }
 
-            await this.adoIntegration.afterScenario(scenario, feature, 'failed', duration, errorWithStack.message, artifacts, errorWithStack.stack, iterationNumber, iterationData);
+            await adoIntegration.afterScenario(scenario, feature, 'failed', duration, errorWithStack.message, artifacts, errorWithStack.stack, iterationNumber, iterationData);
             
         } finally {
             // Execute after hooks

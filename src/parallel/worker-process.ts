@@ -26,6 +26,7 @@ interface ResultMessage {
     status: 'passed' | 'failed' | 'skipped';
     duration: number;
     error?: string;
+    stackTrace?: string;
     steps: any[];
     artifacts: {
         screenshots: string[];
@@ -54,6 +55,7 @@ class WorkerProcess {
         process.env.IS_WORKER = 'true';
         process.env.WORKER_ID = String(this.workerId);
 
+
         this.setupProcessHandlers();
 
         // Initialize worker asynchronously
@@ -63,7 +65,6 @@ class WorkerProcess {
     private async initializeWorker() {
         try {
             // Preload critical modules
-            console.log(`[Worker ${this.workerId}] Preloading modules...`);
             const { CSBDDRunner } = require('../bdd/CSBDDRunner');
             const { CSConfigurationManager } = require('../core/CSConfigurationManager');
             const { CSBrowserManager } = require('../browser/CSBrowserManager');
@@ -71,28 +72,26 @@ class WorkerProcess {
             // Initialize BDD runner
             this.bddRunner = CSBDDRunner.getInstance();
 
-            // If PROJECT is already set, preload those step definitions
-            const project = process.env.PROJECT;
-            if (project) {
-                console.log(`[Worker ${this.workerId}] Preloading steps for project: ${project}`);
-                await this.bddRunner.loadProjectSteps(project);
-            }
+            // Skip preloading step definitions in workers
+            // Steps will be loaded during actual scenario execution in executeSingleScenarioForWorker
+            // This avoids the "No step definitions found" warning and improves startup performance
 
             // Initialize browser manager (but don't launch browser yet)
             this.browserManager = CSBrowserManager.getInstance();
 
-            // Initialize ADO integration if enabled
-            const { CSADOIntegration } = require('../ado/CSADOIntegration');
-            this.adoIntegration = CSADOIntegration.getInstance();
+            // Defer ADO integration initialization until after config is set up
+            // We'll initialize it when we actually execute scenarios
 
-            console.log(`[Worker ${this.workerId}] Initialization complete`);
         } catch (error) {
             console.error(`[Worker ${this.workerId}] Failed to initialize:`, error);
         }
 
-        // Send ready message after initialization
-        process.nextTick(() => {
-            this.sendMessage({ type: 'ready', workerId: this.workerId });
+        // Send ready message after initialization using setImmediate to ensure process is ready
+        setImmediate(() => {
+            // Wait a bit to ensure the parent process is ready to receive messages
+            setTimeout(() => {
+                this.sendMessage({ type: 'ready', workerId: this.workerId });
+            }, 100);
         });
     }
 
@@ -110,9 +109,7 @@ class WorkerProcess {
         switch (message.type) {
             case 'init':
                 // Handle initialization data from orchestrator
-                if (message.project && this.bddRunner) {
-                    await this.bddRunner.loadProjectSteps(message.project);
-                }
+                // Skip preloading - steps will be loaded during execution
                 break;
             case 'execute':
                 await this.executeScenario(message as ExecuteMessage);
@@ -151,8 +148,39 @@ class WorkerProcess {
 
             // Set up configuration
             const configManager = CSConfigurationManager.getInstance();
+
+            // First manually set ADO configuration from environment variables
+            // This ensures ADO works in worker processes
+            const adoKeys = [
+                'ADO_ENABLED', 'ADO_DRY_RUN', 'ADO_ORGANIZATION', 'ADO_PROJECT',
+                'ADO_PAT', 'ADO_BASE_URL', 'ADO_API_VERSION', 'ADO_PLAN_ID',
+                'ADO_SUITE_ID', 'ADO_TEST_PLAN_ID', 'ADO_TEST_SUITE_ID'
+            ];
+
+            for (const key of adoKeys) {
+                const value = process.env[key];
+                if (value !== undefined) {
+                    configManager.set(key, value);
+                }
+            }
+
+            // Map ADO_ENABLED to ADO_INTEGRATION_ENABLED (which is what the code uses)
+            if (process.env.ADO_ENABLED) {
+                configManager.set('ADO_INTEGRATION_ENABLED', process.env.ADO_ENABLED);
+            }
+
+            // Then set config from message
             for (const [key, value] of Object.entries(message.config)) {
                 configManager.set(key, value);
+            }
+
+            // Now initialize ADO integration after config is set
+            // Initialize ADO integration if enabled
+            if (configManager.get('ADO_ENABLED') === 'true' || configManager.get('ADO_INTEGRATION_ENABLED') === 'true') {
+                if (!this.adoIntegration) {
+                    this.adoIntegration = CSADOIntegration.getInstance();
+                    await this.adoIntegration.initialize(true); // true for worker mode
+                }
             }
 
             // Create runner and browser manager if not already created
@@ -193,6 +221,12 @@ class WorkerProcess {
             result.endTime = scenarioResult.endTime;
             result.testData = scenarioResult.testData;  // Pass test data for data-driven scenarios
 
+            // Capture error and stack trace for failed tests
+            if (result.status === 'failed') {
+                result.error = scenarioResult.error;
+                result.stackTrace = scenarioResult.stackTrace;
+            }
+
             // Track if any test failed for HAR decision
             if (result.status === 'failed') {
                 this.anyTestFailed = true;
@@ -218,6 +252,7 @@ class WorkerProcess {
             console.error(`[Worker ${this.workerId}] Error:`, error);
             result.status = 'failed';
             result.error = error.message;
+            result.stackTrace = error.stack;
         } finally {
             // Handle browser reuse or close based on configuration
             try {
@@ -291,8 +326,14 @@ class WorkerProcess {
     }
 
     private sendMessage(message: any) {
-        if (process.send) {
-            process.send(message);
+        try {
+            if (process.send && process.connected) {
+                process.send(message);
+            } else {
+                console.error(`[Worker ${this.workerId}] Cannot send message - process not connected`);
+            }
+        } catch (error) {
+            console.error(`[Worker ${this.workerId}] Error sending message:`, error);
         }
     }
 
@@ -307,7 +348,7 @@ class WorkerProcess {
                 console.log(`[Worker ${this.workerId}] Browser closed, HAR saved if needed`);
             }
 
-            if (this.bddRunner) {
+            if (this.bddRunner && typeof this.bddRunner.cleanup === 'function') {
                 await this.bddRunner.cleanup();
             }
         } catch (e) {

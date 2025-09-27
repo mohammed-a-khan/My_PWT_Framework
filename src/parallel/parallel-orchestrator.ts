@@ -39,6 +39,7 @@ export class ParallelOrchestrator {
     private totalCount = 0;
     private maxWorkers: number;
     private adoIntegration: any;
+    private dataDrivenResults: Map<string, any[]> = new Map(); // Group iterations by scenario base name
 
     constructor(maxWorkers?: number) {
         this.maxWorkers = maxWorkers || parseInt(process.env.PARALLEL_WORKERS || '0') || os.cpus().length;
@@ -272,7 +273,7 @@ export class ParallelOrchestrator {
             const workerProcess = fork(script, [], {
                 execArgv: ['-r', 'ts-node/register'],
                 env: {
-                    ...process.env,
+                    ...process.env,  // This includes all environment variables including ADO_*
                     WORKER_ID: String(id),
                     TS_NODE_TRANSPILE_ONLY: 'true',
                     PROJECT: project  // Pass project for early step loading
@@ -344,23 +345,51 @@ export class ParallelOrchestrator {
                 ...result
             });
 
-            // Process ADO result if metadata exists
-            if (result.adoMetadata && this.adoIntegration?.isEnabled()) {
-                const status = result.status === 'passed' ? 'passed' :
-                              result.status === 'failed' ? 'failed' : 'skipped';
+            // Handle data-driven test aggregation
+            if (work.iterationNumber && work.totalIterations) {
+                // This is a data-driven test iteration
+                const baseScenarioName = work.scenario.name.replace(/_Iteration-\d+$/, '');
+                const scenarioKey = `${work.feature.name}::${baseScenarioName}`;
 
-                // Add result for batch publishing
-                await this.adoIntegration.afterScenario(
-                    work.scenario,
-                    work.feature,
-                    status,
-                    result.duration,
-                    result.error,
-                    result.artifacts,
-                    undefined, // stack trace (could be extracted from error if needed)
-                    result.iterationNumber,
-                    result.iterationData
-                );
+                if (!this.dataDrivenResults.has(scenarioKey)) {
+                    this.dataDrivenResults.set(scenarioKey, []);
+                }
+
+                const iterations = this.dataDrivenResults.get(scenarioKey)!;
+                iterations.push({
+                    iteration: work.iterationNumber,
+                    status: result.status,
+                    duration: result.duration,
+                    errorMessage: result.error,
+                    stackTrace: result.stackTrace,
+                    iterationData: work.exampleRow ?
+                        Object.fromEntries(work.exampleHeaders?.map((h, i) => [h, work.exampleRow![i]]) || []) :
+                        undefined
+                });
+
+                // Check if all iterations for this scenario are complete
+                if (iterations.length === work.totalIterations) {
+                    // All iterations complete, publish aggregated result to ADO
+                    await this.publishAggregatedResult(scenarioKey, work, iterations);
+                }
+            } else {
+                // Regular scenario or single test - publish immediately
+                if (result.adoMetadata && this.adoIntegration?.isEnabled()) {
+                    const status = result.status === 'passed' ? 'passed' :
+                                  result.status === 'failed' ? 'failed' : 'skipped';
+
+                    await this.adoIntegration.afterScenario(
+                        work.scenario,
+                        work.feature,
+                        status,
+                        result.duration,
+                        result.error,
+                        result.artifacts,
+                        result.stackTrace, // Pass stack trace for failed tests
+                        undefined, // iterationNumber
+                        undefined  // iterationData
+                    );
+                }
             }
 
             this.completedCount++;
@@ -376,6 +405,86 @@ export class ParallelOrchestrator {
             // Assign next work
             this.assignWork(worker);
         }
+    }
+
+    private async publishAggregatedResult(scenarioKey: string, work: WorkItem, iterations: any[]) {
+        if (!this.adoIntegration?.isEnabled()) {
+            return;
+        }
+
+        // Sort iterations by iteration number
+        iterations.sort((a, b) => a.iteration - b.iteration);
+
+        // Determine overall outcome
+        const hasFailure = iterations.some(iter => iter.status === 'failed');
+        const overallOutcome = hasFailure ? 'Failed' : 'Passed';
+
+        // Build detailed summary for all iterations
+        const iterationSummaries: string[] = [];
+        const failedIterations: string[] = [];
+        let totalDuration = 0;
+        let firstStackTrace: string | undefined;
+
+        for (const iter of iterations) {
+            totalDuration += iter.duration || 0;
+
+            let iterSummary = `Iteration ${iter.iteration}`;
+            if (iter.iterationData) {
+                const params = Object.entries(iter.iterationData)
+                    .map(([key, value]) => `${key}=${value}`)
+                    .join(', ');
+                iterSummary += ` [${params}]`;
+            }
+            iterSummary += `: ${iter.status === 'passed' ? '✅ Passed' : '❌ Failed'}`;
+
+            iterationSummaries.push(iterSummary);
+
+            if (iter.status === 'failed') {
+                let failedDetail = `  - ${iterSummary}`;
+                if (iter.errorMessage) {
+                    failedDetail += `\n    Error: ${iter.errorMessage}`;
+                }
+                if (iter.stackTrace) {
+                    failedDetail += `\n    Stack Trace: ${iter.stackTrace}`;
+                    // Keep the first stack trace for the main error
+                    if (!firstStackTrace) {
+                        firstStackTrace = iter.stackTrace;
+                    }
+                }
+                failedIterations.push(failedDetail);
+            }
+        }
+
+        // Build comprehensive comment
+        const comment = `Data-Driven Test Results (${iterations.length} iterations)\n` +
+                       `Overall Status: ${overallOutcome}\n\n` +
+                       `Iteration Results:\n${iterationSummaries.join('\n')}\n\n` +
+                       (failedIterations.length > 0 ? `Failed Iterations Details:\n${failedIterations.join('\n')}` : 'All iterations passed');
+
+        // Create aggregated error message if there are failures
+        const aggregatedError = failedIterations.length > 0 ?
+            `${failedIterations.length} of ${iterations.length} iterations failed. See comment for details.` :
+            undefined;
+
+        // Use the original scenario name without iteration suffix
+        const baseScenario = { ...work.scenario };
+        baseScenario.name = work.scenario.name.replace(/_Iteration-\d+$/, '');
+
+        // Publish aggregated result
+        await this.adoIntegration.afterScenario(
+            baseScenario,
+            work.feature,
+            hasFailure ? 'failed' : 'passed',
+            totalDuration,
+            aggregatedError,
+            {}, // artifacts - could be aggregated from iterations
+            firstStackTrace, // pass the first stack trace from failed iterations
+            undefined, // no iterationNumber for aggregated result
+            undefined, // no iterationData for aggregated result
+            comment // pass the detailed comment
+        );
+
+        CSReporter.info(`📊 Published aggregated result for ${baseScenario.name}: ${overallOutcome} (${iterations.length} iterations, ${totalDuration}ms total)`);
     }
 
     private assignWork(worker: Worker) {

@@ -35,6 +35,13 @@ export class CSADOIntegration {
     }
 
     /**
+     * Get the publisher instance for direct access
+     */
+    public getPublisher(): CSADOPublisher {
+        return this.publisher;
+    }
+
+    /**
      * Initialize ADO integration
      */
     public async initialize(isParallel: boolean = false): Promise<void> {
