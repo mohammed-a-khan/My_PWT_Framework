@@ -1,14 +1,35 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as XLSX from 'xlsx';
-import { parse } from 'csv-parse/sync';
-import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
 import { CSValueResolver } from '../utils/CSValueResolver';
 
-const parseXML = promisify(parseString);
+// Lazy load heavy libraries for performance
+let XLSX: any = null;
+const getXLSX = () => {
+    if (!XLSX) {
+        XLSX = require('xlsx');
+    }
+    return XLSX;
+};
+
+let csvParse: any = null;
+const getCSVParse = () => {
+    if (!csvParse) {
+        csvParse = require('csv-parse/sync').parse;
+    }
+    return csvParse;
+};
+
+let xml2js: any = null;
+const getParseXML = () => {
+    if (!xml2js) {
+        const { parseString } = require('xml2js');
+        xml2js = promisify(parseString);
+    }
+    return xml2js;
+};
 
 export interface DataRow {
     [key: string]: any;
@@ -154,7 +175,8 @@ export class CSDataProvider {
             throw new Error(`Excel file not found: ${filePath}`);
         }
         
-        const workbook = XLSX.readFile(filePath);
+        const xlsx = getXLSX();
+        const workbook = xlsx.readFile(filePath);
         const sheetName = options.sheet || workbook.SheetNames[0];
         
         if (!workbook.Sheets[sheetName]) {
@@ -162,7 +184,7 @@ export class CSDataProvider {
         }
         
         const sheet = workbook.Sheets[sheetName];
-        const data = XLSX.utils.sheet_to_json(sheet);
+        const data = xlsx.utils.sheet_to_json(sheet);
         
         // Process formulas if any
         data.forEach((row: any) => {
@@ -185,6 +207,7 @@ export class CSDataProvider {
         }
         
         const content = fs.readFileSync(filePath, 'utf8');
+        const parse = getCSVParse();
         const data = parse(content, {
             columns: true,
             skip_empty_lines: true,
@@ -223,6 +246,7 @@ export class CSDataProvider {
         }
 
         const content = fs.readFileSync(filePath, 'utf8');
+        const parseXML = getParseXML();
         const result: any = await parseXML(content);
 
         // Handle different XML structures

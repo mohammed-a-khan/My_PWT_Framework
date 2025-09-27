@@ -1,6 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Parser, AstBuilder, GherkinClassicTokenMatcher } from '@cucumber/gherkin';
+// Lazy load cucumber/gherkin for performance (saves 4s)
+let gherkinModule: any = null;
+const getGherkin = () => {
+    if (!gherkinModule) {
+        gherkinModule = require('@cucumber/gherkin');
+    }
+    return gherkinModule;
+};
+
 import { CSReporter } from '../reporter/CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 
@@ -202,7 +210,8 @@ export class CSBDDEngine {
             // Preprocess the gherkin text to handle @DataProvider tags
             const processedText = this.preprocessDataProviderTags(gherkinText);
 
-            const parser = new Parser(new AstBuilder(uuidFn), new GherkinClassicTokenMatcher());
+            const { Parser, AstBuilder, GherkinClassicTokenMatcher } = getGherkin();
+        const parser = new Parser(new AstBuilder(uuidFn), new GherkinClassicTokenMatcher());
             const ast = parser.parse(processedText);
 
             if (!ast.feature) {
@@ -267,6 +276,7 @@ export class CSBDDEngine {
     public getAST(featurePath: string): any {
         const fullPath = path.resolve(process.cwd(), featurePath);
         const content = fs.readFileSync(fullPath, 'utf8');
+        const { Parser, AstBuilder, GherkinClassicTokenMatcher } = getGherkin();
         const parser = new Parser(new AstBuilder(uuidFn), new GherkinClassicTokenMatcher());
         return parser.parse(content);
     }

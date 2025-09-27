@@ -1,20 +1,27 @@
-import { Page } from '@playwright/test';
-import { CSBrowserManager } from '../browser/CSBrowserManager';
+// Lazy load Playwright and BrowserManager for performance
+// import { Page } from '@playwright/test';
+// import { CSBrowserManager } from '../browser/CSBrowserManager';
+type Page = any;
+let CSBrowserManager: any = null;
 import { CSConfigurationManager } from './CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
 import { CSWebElement } from '../element/CSWebElement';
 import { CSCrossDomainNavigationHandler } from '../navigation/CSCrossDomainNavigationHandler';
 
 export abstract class CSBasePage {
-    protected page: Page;
+    protected page: any; // Page type from Playwright
     protected config: CSConfigurationManager;
-    protected browserManager: CSBrowserManager;
+    protected browserManager: any; // CSBrowserManager - lazy loaded
     protected url: string = '';
     protected elements: Map<string, CSWebElement> = new Map();
-    private static crossDomainHandlers: Map<Page, CSCrossDomainNavigationHandler> = new Map();
+    private static crossDomainHandlers: Map<any, CSCrossDomainNavigationHandler> = new Map();
 
     constructor() {
         this.config = CSConfigurationManager.getInstance();
+        // Lazy load CSBrowserManager
+        if (!CSBrowserManager) {
+            CSBrowserManager = require('../browser/CSBrowserManager').CSBrowserManager;
+        }
         this.browserManager = CSBrowserManager.getInstance();
         this.page = this.browserManager.getPage();
         this.initializeElements();
@@ -22,7 +29,7 @@ export abstract class CSBasePage {
     }
     
     // Public getter for page access
-    public getPage(): Page {
+    public getPage(): any {
         return this.page;
     }
     

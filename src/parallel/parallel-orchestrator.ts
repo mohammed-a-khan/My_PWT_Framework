@@ -84,10 +84,8 @@ export class ParallelOrchestrator {
         // Cleanup
         await this.cleanup();
 
-        // Complete ADO test run for parallel execution
-        if (this.adoIntegration?.isEnabled()) {
-            await this.adoIntegration.afterAllTests();
-        }
+        // Note: ADO test run completion is now handled in CSBDDRunner after reports are generated
+        // to ensure all artifacts (including HTML reports) are included in the zip
 
         CSReporter.info(`Parallel execution completed: ${this.completedCount}/${this.totalCount} scenarios`);
         return this.results;
@@ -358,7 +356,10 @@ export class ParallelOrchestrator {
                     status,
                     result.duration,
                     result.error,
-                    result.artifacts
+                    result.artifacts,
+                    undefined, // stack trace (could be extracted from error if needed)
+                    result.iterationNumber,
+                    result.iterationData
                 );
             }
 

@@ -7,6 +7,8 @@ import { CSADOPublisher, ScenarioResult } from './CSADOPublisher';
 import { CSADOTagExtractor } from './CSADOTagExtractor';
 import { CSReporter } from '../reporter/CSReporter';
 import { ParsedScenario, ParsedFeature } from '../bdd/CSBDDEngine';
+import { CSTestResultsManager } from '../reporter/CSTestResultsManager';
+import { CSConfigurationManager } from '../core/CSConfigurationManager';
 
 export class CSADOIntegration {
     private static instance: CSADOIntegration;
@@ -15,10 +17,14 @@ export class CSADOIntegration {
     private isInitialized: boolean = false;
     private isParallelMode: boolean = false;
     private allScenarios: Array<{scenario: ParsedScenario, feature: ParsedFeature}> = [];
+    private resultsManager: CSTestResultsManager;
+    private config: CSConfigurationManager;
 
     private constructor() {
         this.publisher = CSADOPublisher.getInstance();
         this.tagExtractor = CSADOTagExtractor.getInstance();
+        this.resultsManager = CSTestResultsManager.getInstance();
+        this.config = CSConfigurationManager.getInstance();
     }
 
     public static getInstance(): CSADOIntegration {
@@ -46,12 +52,73 @@ export class CSADOIntegration {
     }
 
     /**
+     * Validate ADO configuration for the test run
+     * Returns true if ADO should be enabled, false otherwise
+     */
+    private validateADOConfiguration(scenarios: Array<{scenario: ParsedScenario, feature: ParsedFeature}>): boolean {
+        if (!this.publisher.isEnabled()) {
+            return false;
+        }
+
+        // Check if at least one scenario has test case IDs
+        let hasTestCases = false;
+        let hasValidPlanSuite = false;
+        const missingPlanSuite: string[] = [];
+
+        for (const {scenario, feature} of scenarios) {
+            const metadata = this.tagExtractor.extractMetadata(scenario, feature);
+
+            if (metadata.testCaseIds.length > 0) {
+                hasTestCases = true;
+
+                if (!metadata.testPlanId || !metadata.testSuiteId) {
+                    missingPlanSuite.push(`${scenario.name} (Plan: ${metadata.testPlanId || 'missing'}, Suite: ${metadata.testSuiteId || 'missing'})`);
+                } else {
+                    hasValidPlanSuite = true;
+                }
+            }
+        }
+
+        // Validate: Must have at least one test case
+        if (!hasTestCases) {
+            CSReporter.warn('⚠️ ADO Integration disabled: No scenarios have @TestCaseId tags');
+            CSReporter.warn('Add @TestCaseId tags to scenarios to enable ADO integration');
+            return false;
+        }
+
+        // Validate: Must have valid plan/suite for test cases
+        if (!hasValidPlanSuite && missingPlanSuite.length > 0) {
+            CSReporter.error('❌ ADO Integration disabled: Test cases found but no valid Plan/Suite IDs');
+            CSReporter.error('Missing Plan or Suite IDs for scenarios:');
+            missingPlanSuite.forEach(s => CSReporter.error(`  - ${s}`));
+            CSReporter.error('Add @TestPlanId and @TestSuiteId tags or set ADO_TEST_PLAN_ID and ADO_TEST_SUITE_ID in config');
+            return false;
+        }
+
+        if (missingPlanSuite.length > 0) {
+            CSReporter.warn('⚠️ Some scenarios have test cases but missing Plan/Suite IDs:');
+            missingPlanSuite.forEach(s => CSReporter.warn(`  - ${s}`));
+        }
+
+        CSReporter.info('✅ ADO configuration validated successfully');
+        return true;
+    }
+
+    /**
      * Collect all scenarios that will be executed
      * This should be called before test execution starts
      */
     public async collectScenarios(scenarios: Array<{scenario: ParsedScenario, feature: ParsedFeature}>): Promise<void> {
         this.allScenarios = scenarios;
+
+        // Validate configuration before collecting test points
         if (this.publisher.isEnabled()) {
+            if (!this.validateADOConfiguration(scenarios)) {
+                // Disable ADO for this run by not collecting test points
+                CSReporter.warn('Skipping ADO test point collection due to configuration issues');
+                return;
+            }
+
             // Collect test points from all scenarios
             await this.publisher.collectTestPoints(scenarios);
         }
@@ -96,22 +163,35 @@ export class CSADOIntegration {
     public async afterScenario(
         scenario: ParsedScenario,
         feature: ParsedFeature,
-        status: 'passed' | 'failed' | 'skipped',
+        status: 'passed' | 'failed' | 'skipped' | 'completed',
         duration: number,
         errorMessage?: string,
-        artifacts?: any
+        artifacts?: any,
+        stackTrace?: string,
+        iterationNumber?: number,
+        iterationData?: any
     ): Promise<void> {
         if (!this.publisher.isEnabled()) {
+            return;
+        }
+
+        // Special handling for data-driven test completion signal
+        if (status === 'completed') {
+            // This signals that all iterations are done, publish the aggregated results
+            await this.publisher.publishDataDrivenResults(scenario, feature);
             return;
         }
 
         const result: ScenarioResult = {
             scenario,
             feature,
-            status,
+            status: status as 'passed' | 'failed' | 'skipped',
             duration,
             errorMessage,
-            artifacts
+            stackTrace,
+            artifacts,
+            iteration: iterationNumber,
+            iterationData
         };
 
         if (this.isParallelMode) {
@@ -137,8 +217,12 @@ export class CSADOIntegration {
                 await this.publisher.publishAllResults();
             }
 
-            // Complete the test run
-            await this.publisher.completeTestRun();
+            // For ADO, always create a zip file for attachment (regardless of REPORTS_ZIP_RESULTS flag)
+            CSReporter.info('Creating test results zip for ADO attachment...');
+            const testResultsPath = await this.resultsManager.createTestResultsZip();
+
+            // Complete the test run with results attachment
+            await this.publisher.completeTestRun(testResultsPath);
         } catch (error) {
             CSReporter.error(`Failed to complete ADO test run: ${error}`);
         }
@@ -172,7 +256,9 @@ export class CSADOIntegration {
             status: workerResult.status || 'skipped',
             duration: workerResult.duration || 0,
             errorMessage: workerResult.error,
-            artifacts: workerResult.artifacts
+            artifacts: workerResult.artifacts,
+            iteration: workerResult.iterationNumber,
+            iterationData: workerResult.iterationData
         };
     }
 

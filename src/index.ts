@@ -67,6 +67,32 @@ async function main() {
         // Parse command line arguments
         const args = minimist(process.argv.slice(2));
 
+        // Handle help and version flags without loading modules
+        if (args.help || args.h) {
+            console.log(`
+CS Test Automation Framework
+
+Usage: npx ts-node src/index.ts [options]
+
+Options:
+  --project <name>      Project name (required)
+  --features <path>     Path to feature files
+  --tags <tags>         Tags to filter scenarios
+  --parallel            Run tests in parallel
+  --workers <n>         Number of parallel workers
+  --headless            Run browser in headless mode
+  --browser <type>      Browser type (chrome, firefox, webkit)
+  --help                Show this help message
+  --version             Show version
+`);
+            process.exit(0);
+        }
+
+        if (args.version || args.v) {
+            console.log('CS Test Automation Framework v3.0.0');
+            process.exit(0);
+        }
+
         // Lazy load configuration manager to avoid startup delay
         const { CSConfigurationManager } = await import('./core/CSConfigurationManager');
 

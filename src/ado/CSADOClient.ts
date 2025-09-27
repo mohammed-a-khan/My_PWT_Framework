@@ -3,6 +3,8 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
+import * as fs from 'fs';
+import * as path from 'path';
 
 export interface ADOConfig {
     organization: string;
@@ -46,6 +48,25 @@ export interface TestResult {
     stackTrace?: string;
     attachments?: string[];
     duration?: number;
+    iterationDetails?: TestIterationDetails[];  // For manual data-driven tests
+    subResults?: any[];  // For automated data-driven tests (proper way for automated tests)
+    testCaseTitle?: string;  // Custom title for test result (used for iteration naming)
+    comment?: string;  // Comment for test result
+}
+
+export interface TestIterationDetails {
+    id: number;
+    outcome: 'Passed' | 'Failed' | 'Blocked' | 'NotApplicable';
+    parameters?: TestParameter[];
+    errorMessage?: string;
+    durationInMs?: number;
+    startedDate?: string;
+    completedDate?: string;
+}
+
+export interface TestParameter {
+    parameterName: string;
+    value: string;
 }
 
 export interface Bug {
@@ -188,8 +209,11 @@ export class CSADOClient {
     
     private executeRequest(method: string, url: string, data: any, timeout: number): Promise<any> {
         return new Promise((resolve, reject) => {
+            // Debug log the actual URL being used
+            CSReporter.debug(`Making ADO request to: ${url}`);
+
             const urlObj = new URL(url);
-            
+
             const options: any = {
                 hostname: urlObj.hostname,
                 path: urlObj.pathname + urlObj.search,
@@ -274,25 +298,140 @@ export class CSADOClient {
         return steps;
     }
     
-    public async updateTestResult(result: TestResult): Promise<void> {
+    /**
+     * Add a new test result to a test run (for data-driven iterations)
+     */
+    public async addTestResult(result: TestResult, runId: number): Promise<void> {
         if (!this.config.getBoolean('ADO_UPDATE_TEST_CASES', true)) {
             return;
         }
-        
-        CSReporter.info(`Updating test result for test case: ${result.testCaseId}`);
-        
-        const data = {
-            results: [{
+
+        CSReporter.info(`Adding new test result for test case: ${result.testCaseId} in run: ${runId}`);
+
+        try {
+            // Create a new test result for this iteration
+            const data = [{
                 testCase: { id: result.testCaseId },
+                testCaseTitle: result.testCaseTitle || `Test Case ${result.testCaseId}`,
                 outcome: result.outcome,
                 errorMessage: result.errorMessage,
                 stackTrace: result.stackTrace,
                 durationInMs: result.duration,
-                state: 'Completed'
-            }]
-        };
-        
-        await this.makeRequest('POST', '/test/runs/1/results', data);
+                state: 'Completed',
+                completedDate: new Date().toISOString(),
+                startedDate: new Date(Date.now() - (result.duration || 0)).toISOString(),
+                comment: result.comment || `Automated test execution - ${new Date().toISOString()}`
+            }];
+
+            CSReporter.debug(`Adding new test result with data: ${JSON.stringify(data, null, 2)}`);
+
+            const response = await this.makeRequest('POST', `/test/runs/${runId}/results`, data);
+
+            if (response && response.value && response.value.length > 0) {
+                CSReporter.info(`✅ New test result added for test case ${result.testCaseId}: ${result.outcome}`);
+            } else {
+                CSReporter.warn(`Failed to add new test result for test case ${result.testCaseId}`);
+            }
+        } catch (error) {
+            CSReporter.error(`Failed to add test result for test case ${result.testCaseId}: ${error}`);
+        }
+    }
+
+    public async updateTestResult(result: TestResult, runId?: number): Promise<void> {
+        if (!this.config.getBoolean('ADO_UPDATE_TEST_CASES', true)) {
+            return;
+        }
+
+        // Require runId to be provided
+        if (!runId) {
+            CSReporter.error('Cannot update test result: No test run ID provided');
+            return;
+        }
+
+        CSReporter.info(`Updating test result for test case: ${result.testCaseId} in run: ${runId}`);
+
+        try {
+            // First, get the test results from the run to find the correct result ID
+            const runResults = await this.makeRequest('GET', `/test/runs/${runId}/results`);
+
+            if (!runResults.value || runResults.value.length === 0) {
+                CSReporter.error(`No test results found in test run ${runId}`);
+                return;
+            }
+
+            // Debug log first result structure (commented out to reduce verbosity)
+            // CSReporter.debug(`Sample test result structure: ${JSON.stringify(runResults.value[0], null, 2)}`);
+
+            // Test results in ADO may have test case ID in different locations
+            // When created from test points, the test case is under testCase.id
+            const testCaseIdStr = String(result.testCaseId);
+            const testResult = runResults.value.find((r: any) => {
+                // Check all possible locations for test case ID
+                const tcId = r.testCase?.id || r.testCaseReference?.id || r.testCaseId || r.workItem?.id;
+                return String(tcId) === testCaseIdStr;
+            });
+
+            if (!testResult) {
+                CSReporter.warn(`No test result found for test case ${result.testCaseId} in run ${runId}`);
+                // Commented out detailed debug logging to reduce verbosity
+                // CSReporter.debug(`Looking for test case ID: ${testCaseIdStr}`);
+                // CSReporter.debug(`Available test results in run: ${JSON.stringify(runResults.value?.map((r: any) => ({
+                //     resultId: r.id,
+                //     testCaseId: r.testCase?.id || r.testCaseReference?.id || r.testCaseId || 'unknown',
+                //     testCaseName: r.testCase?.name || r.testCaseReference?.name || r.testCaseTitle || 'unknown',
+                //     state: r.state,
+                //     outcome: r.outcome
+                // })), null, 2)}`);
+                return;
+            }
+
+            // CSReporter.debug(`Found test result ${testResult.id} for test case ${result.testCaseId}`);
+
+            // Update the specific test result
+            const data: any = [{
+                id: testResult.id,
+                outcome: result.outcome,
+                errorMessage: result.errorMessage,
+                stackTrace: result.stackTrace,
+                durationInMs: result.duration,
+                state: 'Completed',
+                completedDate: new Date().toISOString(),
+                comment: result.comment || `Automated test execution - ${new Date().toISOString()}`
+            }];
+
+            // Add test case title if provided (for iteration naming)
+            if (result.testCaseTitle) {
+                data[0].testCaseTitle = result.testCaseTitle;
+            }
+
+            // For data-driven tests, pass iterationDetails directly
+            if (result.iterationDetails && result.iterationDetails.length > 0) {
+                data[0].iterationDetails = result.iterationDetails.map(iteration => ({
+                    id: iteration.id,
+                    outcome: iteration.outcome,
+                    errorMessage: iteration.errorMessage,
+                    durationInMs: iteration.durationInMs,
+                    startedDate: iteration.startedDate || new Date().toISOString(),
+                    completedDate: iteration.completedDate || new Date().toISOString(),
+                    parameters: iteration.parameters || []
+                }));
+                CSReporter.info(`✅ Sending ${result.iterationDetails.length} iterations to ADO`);
+                CSReporter.info(`📋 Iteration 1 details: ID=${data[0].iterationDetails[0].id}, Outcome=${data[0].iterationDetails[0].outcome}, Params=${JSON.stringify(data[0].iterationDetails[0].parameters)}`);
+            }
+
+            // Enable detailed debug logging to diagnose 500 error
+            CSReporter.debug(`Updating test result with data: ${JSON.stringify(data, null, 2)}`);
+
+            const updateResponse = await this.makeRequest('PATCH', `/test/runs/${runId}/results`, data);
+
+            if (updateResponse && updateResponse.value && updateResponse.value.length > 0) {
+                CSReporter.info(`✅ Test result updated for test case ${result.testCaseId}: ${result.outcome} (${result.duration}ms)`);
+            } else {
+                CSReporter.warn(`Test result update may have failed for test case ${result.testCaseId}`);
+            }
+        } catch (error) {
+            CSReporter.error(`Failed to update test result for test case ${result.testCaseId}: ${error}`);
+        }
         
         // Upload attachments if any
         if (result.attachments && result.attachments.length > 0) {
@@ -301,7 +440,7 @@ export class CSADOClient {
             }
         }
         
-        CSReporter.info(`Test result updated: ${result.outcome}`);
+        CSReporter.info(`✅ Test result updated for test case ${result.testCaseId}: ${result.outcome}`);
     }
     
     public async createBug(bug: Bug): Promise<number> {
@@ -420,10 +559,19 @@ export class CSADOClient {
 
     public async fetchTestPoints(planId: number, suiteId: number): Promise<any[]> {
         CSReporter.info(`Fetching test points for plan ${planId}, suite ${suiteId}`);
-        // FIXED: Use 'testpoints' (plural) not 'testpoint'
-        const response = await this.makeRequest('GET', `/test/plans/${planId}/suites/${suiteId}/testpoints`);
+        // Match Java framework: Use 'points' not 'testpoints'
+        const response = await this.makeRequest('GET', `/test/plans/${planId}/suites/${suiteId}/points`);
 
         const testPoints = response.value || [];
+
+        // Log test case IDs found in test points for debugging
+        if (testPoints.length > 0) {
+            const testCaseIds = testPoints.map((tp: any) => {
+                // Try to find test case ID in various possible locations
+                return tp.testCase?.id || tp.testCaseReference?.id || tp.testCaseId || tp.workItem?.id || 'unknown';
+            });
+            CSReporter.info(`Test points contain test case IDs: ${testCaseIds.join(', ')}`);
+        }
 
         // Cache the test points
         const cacheKey = `testpoints-${planId}-${suiteId}`;
@@ -433,36 +581,93 @@ export class CSADOClient {
         return testPoints;
     }
     
-    public async createTestRun(name: string, testPoints: number[]): Promise<number> {
+    public async createTestRun(name: string, testPoints: number[], planId?: number): Promise<number> {
         CSReporter.info(`Creating test run: ${name}`);
 
         const data: any = {
             name: name,
             automated: true,
-            state: 'InProgress'
+            state: 'InProgress',
+            startedDate: new Date().toISOString()
         };
 
-        // If we have test points, add them to create a planned test run
-        // This ensures only the specified test points get results
+        // If we have test points, we need to specify the plan ID
+        // Azure DevOps requires plan.id when creating a run with test points
         if (testPoints && testPoints.length > 0) {
             data.pointIds = testPoints;
-            CSReporter.info(`Creating test run with ${testPoints.length} test points`);
+            // Plan ID is required when using test points
+            if (planId) {
+                data.plan = { id: planId };
+                CSReporter.info(`Creating test run with ${testPoints.length} test points from plan ${planId}`);
+            } else {
+                // Try to get plan ID from configuration as fallback
+                const configPlanId = this.config.getNumber('ADO_TEST_PLAN_ID');
+                if (configPlanId) {
+                    data.plan = { id: configPlanId };
+                    CSReporter.info(`Creating test run with ${testPoints.length} test points from plan ${configPlanId} (from config)`);
+                } else {
+                    // This will fail in ADO, but log for debugging
+                    CSReporter.error(`Cannot create test run: Test points specified but no plan ID available`);
+                    throw new Error('Plan ID is required when creating a test run with test points');
+                }
+            }
         }
 
+        CSReporter.debug(`Test run creation payload: ${JSON.stringify(data, null, 2)}`);
+
         const response = await this.makeRequest('POST', '/test/runs', data);
-        CSReporter.info(`Test run created with ID: ${response.id}`);
+        CSReporter.info(`✅ Test run created successfully with ID: ${response.id}`);
         return response.id;
     }
     
     public async completeTestRun(runId: number): Promise<void> {
         CSReporter.info(`Completing test run: ${runId}`);
-        
+
         const data = {
             state: 'Completed',
             completedDate: new Date().toISOString()
         };
-        
+
         await this.makeRequest('PATCH', `/test/runs/${runId}`, data);
+        CSReporter.info(`✅ Test run ${runId} completed successfully`);
+    }
+
+    public async uploadTestRunAttachment(runId: number, filePath: string, attachmentType: string = 'GeneralAttachment'): Promise<void> {
+        CSReporter.info(`Uploading attachment to test run ${runId}: ${path.basename(filePath)}`);
+
+        if (!fs.existsSync(filePath)) {
+            CSReporter.error(`Attachment file not found: ${filePath}`);
+            return;
+        }
+
+        try {
+            // Read the file
+            const fileContent = fs.readFileSync(filePath);
+            const fileName = path.basename(filePath);
+            const fileStats = fs.statSync(filePath);
+
+            CSReporter.debug(`Uploading file: ${fileName} (${fileStats.size} bytes)`);
+
+            // Azure DevOps Test Run Attachments API
+            // First, we need to upload the file content as a stream
+            const attachmentData = {
+                stream: fileContent.toString('base64'),
+                fileName: fileName,
+                comment: `Test execution results - ${new Date().toISOString()}`,
+                attachmentType: attachmentType
+            };
+
+            // Upload directly to test run attachments endpoint
+            const response = await this.makeRequest('POST', `/test/runs/${runId}/attachments`, attachmentData);
+
+            if (response && response.id) {
+                CSReporter.info(`✅ Attachment uploaded successfully to test run ${runId}: ${fileName} (ID: ${response.id})`);
+            } else {
+                CSReporter.warn(`Attachment upload completed but no ID returned for: ${fileName}`);
+            }
+        } catch (error) {
+            CSReporter.error(`Failed to upload attachment: ${error}`);
+        }
     }
     
     public async syncTestCases(featureFiles: string[]): Promise<void> {

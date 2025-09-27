@@ -1,7 +1,14 @@
-import { Page, Locator, ElementHandle } from '@playwright/test';
+// Lazy load Playwright for performance
+// import { Page, Locator, ElementHandle } from '@playwright/test';
+type Page = any;
+type Locator = any;
+type ElementHandle = any;
+
 import { CSReporter } from '../reporter/CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
-import { CSAIEngine } from '../ai/CSAIEngine';
+// Lazy load AI Engine to avoid its Playwright imports
+// import { CSAIEngine } from '../ai/CSAIEngine';
+let CSAIEngine: any = null;
 
 export interface HealingStrategy {
     name: string;
@@ -21,15 +28,26 @@ export interface HealingResult {
 export class CSSelfHealingEngine {
     private static instance: CSSelfHealingEngine;
     private config: CSConfigurationManager;
-    private aiEngine: CSAIEngine;
+    private aiEngine: any; // CSAIEngine - lazy loaded
     private strategies: HealingStrategy[] = [];
     private healingHistory: Map<string, HealingResult> = new Map();
     private elementCache: Map<string, any> = new Map();
     
     private constructor() {
         this.config = CSConfigurationManager.getInstance();
-        this.aiEngine = CSAIEngine.getInstance();
+        // Lazy load AI Engine when needed
+        this.aiEngine = null;
         this.initializeStrategies();
+    }
+
+    private getAIEngine(): any {
+        if (!this.aiEngine) {
+            if (!CSAIEngine) {
+                CSAIEngine = require('../ai/CSAIEngine').CSAIEngine;
+            }
+            this.aiEngine = CSAIEngine.getInstance();
+        }
+        return this.aiEngine;
     }
     
     public static getInstance(): CSSelfHealingEngine {
@@ -184,7 +202,7 @@ export class CSSelfHealingEngine {
         const { tag, attributes } = this.parseLocator(originalLocator);
         
         // Look for elements with similar attributes nearby
-        const candidates = await page.evaluate((attrs) => {
+        const candidates = await page.evaluate((attrs: any) => {
             const elements = document.querySelectorAll('*');
             const results: Array<{ selector: string; score: number }> = [];
             
@@ -267,7 +285,7 @@ export class CSSelfHealingEngine {
         if (!cachedSignature) return null;
         
         // Find elements with similar visual properties
-        const candidates = await page.evaluate((signature) => {
+        const candidates = await page.evaluate((signature: any) => {
             const elements = document.querySelectorAll('*');
             const results: Array<{ selector: string; similarity: number }> = [];
             
@@ -313,7 +331,7 @@ export class CSSelfHealingEngine {
         if (!cachedStructure) return null;
         
         // Find elements with similar DOM structure
-        const candidates = await page.evaluate((structure) => {
+        const candidates = await page.evaluate((structure: any) => {
             const elements = document.querySelectorAll(structure.tag || '*');
             const results: Array<{ selector: string; score: number }> = [];
             
@@ -441,7 +459,7 @@ export class CSSelfHealingEngine {
                 color: style.color,
                 fontSize: style.fontSize
             };
-        }).then(signature => {
+        }).then((signature: any) => {
             this.elementCache.set(`visual_${locator}`, signature);
         });
         
@@ -462,7 +480,7 @@ export class CSSelfHealingEngine {
                     Array.from(el.attributes).map(attr => [attr.name, attr.value])
                 )
             };
-        }).then(structure => {
+        }).then((structure: any) => {
             this.elementCache.set(`structure_${locator}`, structure);
         });
     }

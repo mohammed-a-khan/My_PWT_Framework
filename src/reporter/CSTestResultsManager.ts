@@ -24,6 +24,7 @@ export class CSTestResultsManager {
     private static instance: CSTestResultsManager;
     private config: CSConfigurationManager;
     private currentTestRunDir: string = '';
+    private finalizedZipPath: string | null = null;
     private timestamp: string = '';
     private consoleLogs: any[] = [];
     
@@ -206,28 +207,59 @@ export class CSTestResultsManager {
     /**
      * Finalize test run and optionally zip results
      */
+    /**
+     * Create a zip archive of the test results
+     * @returns Path to the created zip file
+     */
+    public async createTestResultsZip(): Promise<string> {
+        // If already zipped, return the existing path
+        if (this.finalizedZipPath) {
+            CSReporter.debug(`Zip already exists: ${this.finalizedZipPath}`);
+            return this.finalizedZipPath;
+        }
+
+        const zipPath = `${this.currentTestRunDir}.zip`;
+
+        // Check if zip already exists
+        if (fs.existsSync(zipPath)) {
+            CSReporter.info(`Zip file already exists: ${zipPath}`);
+            this.finalizedZipPath = zipPath;
+            return zipPath;
+        }
+
+        CSReporter.info(`Creating zip archive: ${zipPath}`);
+        await this.zipDirectory(this.currentTestRunDir, zipPath);
+        this.finalizedZipPath = zipPath;
+        CSReporter.info(`✅ Test results zipped successfully: ${zipPath}`);
+
+        return zipPath;
+    }
+
+    /**
+     * Finalize test run - handles zipping based on configuration
+     */
     public async finalizeTestRun(): Promise<string> {
         const zipResults = this.config.getBoolean('REPORTS_ZIP_RESULTS', false);
         const keepUnzipped = this.config.getBoolean('REPORTS_KEEP_UNZIPPED', true);
-        
+
+        CSReporter.debug(`Finalize test run - zipResults: ${zipResults}`);
+
         if (!zipResults) {
             CSReporter.info(`Test results available at: ${this.currentTestRunDir}`);
             return this.currentTestRunDir;
         }
-        
+
         // Create zip file
-        const zipPath = `${this.currentTestRunDir}.zip`;
-        await this.zipDirectory(this.currentTestRunDir, zipPath);
-        
+        const zipPath = await this.createTestResultsZip();
+
         // Remove unzipped folder if configured
         if (!keepUnzipped) {
             this.removeDirectory(this.currentTestRunDir);
-            CSReporter.info(`Test results zipped and original folder removed: ${zipPath}`);
+            CSReporter.info(`Original test results folder removed (keepUnzipped=false)`);
         } else {
-            CSReporter.info(`Test results zipped: ${zipPath}`);
             CSReporter.info(`Original results folder kept: ${this.currentTestRunDir}`);
         }
-        
+
         return zipPath;
     }
     
@@ -276,6 +308,24 @@ export class CSTestResultsManager {
      */
     public getCurrentTestRunDir(): string {
         return this.currentTestRunDir;
+    }
+
+    public getFinalizedPath(): string | null {
+        return this.finalizedZipPath || this.currentTestRunDir;
+    }
+
+    /**
+     * Get the zip path if it exists, otherwise null
+     */
+    public getZipPath(): string | null {
+        return this.finalizedZipPath;
+    }
+
+    /**
+     * Check if test results have been zipped
+     */
+    public isZipped(): boolean {
+        return this.finalizedZipPath !== null;
     }
     
     /**

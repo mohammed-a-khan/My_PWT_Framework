@@ -1,4 +1,10 @@
-import { Browser, BrowserContext, Page, chromium, firefox, webkit, BrowserType } from '@playwright/test';
+// Lazy load Playwright for performance - saves 27s at startup
+// These will be loaded when actually needed
+let playwright: any = null;
+type Browser = any;
+type BrowserContext = any;
+type Page = any;
+type BrowserType = any;
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
 import { CSTestResultsManager } from '../reporter/CSTestResultsManager';
@@ -15,10 +21,10 @@ export interface BrowserState {
 export class CSBrowserManager {
     private static instance: CSBrowserManager;
     private static threadInstances: Map<number, CSBrowserManager> = new Map();
-    private browser: Browser | null = null;
-    private context: BrowserContext | null = null;
-    private page: Page | null = null;
-    private browserPool: Map<string, Browser> = new Map();
+    private browser: any | null = null; // Browser from Playwright
+    private context: any | null = null; // BrowserContext from Playwright
+    private page: any | null = null; // Page from Playwright
+    private browserPool: Map<string, any> = new Map(); // Map<string, Browser>
     private currentBrowserType: string = 'chrome';
     private browserState: BrowserState = {};
     private restartCount: number = 0;
@@ -59,6 +65,17 @@ export class CSBrowserManager {
     // Get fresh config reference each time to avoid singleton initialization order issues
     private get config(): CSConfigurationManager {
         return CSConfigurationManager.getInstance();
+    }
+
+    /**
+     * Ensure Playwright is loaded (lazy loading)
+     */
+    private ensurePlaywright(): any {
+        if (!playwright) {
+            // Lazy load playwright - this takes 27 seconds!
+            playwright = require('@playwright/test');
+        }
+        return playwright;
     }
 
     public async launch(browserType?: string): Promise<void> {
@@ -111,7 +128,7 @@ export class CSBrowserManager {
         }
     }
 
-    private async launchBrowser(browserType: string): Promise<Browser> {
+    private async launchBrowser(browserType: string): Promise<any> {
         const isHeadless = this.config.getBoolean('HEADLESS', false);
         
         const browserOptions: any = {
@@ -144,16 +161,20 @@ export class CSBrowserManager {
             // Merge args instead of overwriting
             const chromeArgs = this.getChromeArgs();
             browserOptions.args = [...(browserOptions.args || []), ...chromeArgs];
-            return await chromium.launch(browserOptions);
+            const pw = this.ensurePlaywright();
+            return await pw.chromium.launch(browserOptions);
         } else if (browserType === 'firefox') {
             const firefoxArgs = this.getFirefoxArgs();
             browserOptions.args = [...(browserOptions.args || []), ...firefoxArgs];
-            return await firefox.launch(browserOptions);
+            const pw = this.ensurePlaywright();
+            return await pw.firefox.launch(browserOptions);
         } else if (browserType === 'webkit' || browserType === 'safari') {
-            return await webkit.launch(browserOptions);
+            const pw = this.ensurePlaywright();
+            return await pw.webkit.launch(browserOptions);
         } else if (browserType === 'edge') {
             browserOptions.channel = 'msedge';
-            return await chromium.launch(browserOptions);
+            const pw = this.ensurePlaywright();
+            return await pw.chromium.launch(browserOptions);
         } else {
             throw new Error(`Unsupported browser type: ${browserType}`);
         }
@@ -338,7 +359,7 @@ export class CSBrowserManager {
 
         // Add console log listener if enabled
         if (this.config.getBoolean('CONSOLE_LOG_CAPTURE', true)) {
-            this.page.on('console', msg => {
+            this.page.on('console', (msg: any) => {
                 const resultsManager = CSTestResultsManager.getInstance();
                 resultsManager.addConsoleLog(msg.type(), msg.text(), new Date());
                 CSReporter.debug(`Console [${msg.type()}]: ${msg.text()}`);
@@ -346,12 +367,12 @@ export class CSBrowserManager {
         }
 
         // Add page error listener
-        this.page.on('pageerror', error => {
+        this.page.on('pageerror', (error: any) => {
             CSReporter.warn(`Page error: ${error.message}`);
         });
 
         // Add request failed listener
-        this.page.on('requestfailed', request => {
+        this.page.on('requestfailed', (request: any) => {
             CSReporter.debug(`Request failed: ${request.url()} - ${request.failure()?.errorText}`);
         });
 
@@ -406,7 +427,7 @@ export class CSBrowserManager {
             const storageState = await this.context.storageState();
             this.browserState.cookies = storageState.cookies;
             this.browserState.localStorage = storageState.origins
-                .flatMap(origin => origin.localStorage || []);
+                .flatMap((origin: any) => origin.localStorage || []);
             // Session storage is not persisted in Playwright's storageState
             this.browserState.sessionStorage = [];
             
@@ -812,21 +833,21 @@ export class CSBrowserManager {
         this.browserPool.clear();
     }
 
-    public getPage(): Page {
+    public getPage(): any {
         if (!this.page) {
             throw new Error('Page not initialized');
         }
         return this.page;
     }
 
-    public getContext(): BrowserContext {
+    public getContext(): any {
         if (!this.context) {
             throw new Error('Context not initialized');
         }
         return this.context;
     }
 
-    public getBrowser(): Browser {
+    public getBrowser(): any {
         if (!this.browser) {
             throw new Error('Browser not initialized');
         }

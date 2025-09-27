@@ -4,7 +4,11 @@
  * Supports Netscaler, Citrix, SSO providers (Okta, ADFS), and other authentication systems
  */
 
-import { Page, Frame } from '@playwright/test';
+// Lazy load Playwright for performance
+// import { Page, Frame } from '@playwright/test';
+type Page = any;
+type Frame = any;
+
 import { CSReporter } from '../reporter/CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 
@@ -17,7 +21,7 @@ export interface NavigationState {
 }
 
 export class CSCrossDomainNavigationHandler {
-    private page: Page;
+    private page: any; // Page from Playwright
     private config: CSConfigurationManager;
     private originalDomain: string = '';
     private targetDomain: string = '';
@@ -102,7 +106,7 @@ export class CSCrossDomainNavigationHandler {
         });
 
         // Track response events for redirect detection
-        this.page.on('response', async (response) => {
+        this.page.on('response', async (response: any) => {
             if (response.status() >= 300 && response.status() < 400) {
                 const currentUrl = response.url();
                 const location = response.headers()['location'];

@@ -71,7 +71,7 @@ export class CSBDDRunner {
     private testResults: any = {};
     private parallelExecutionDone: boolean = false;
     private scenarioCountForReuse: number = 0;
-    private adoIntegration: CSADOIntegration;
+    private adoIntegration: any; // CSADOIntegration - lazy loaded
 
     private constructor() {
         this.bddEngine = CSBDDEngine.getInstance();
@@ -335,6 +335,9 @@ export class CSBDDRunner {
                 await this.generateProfessionalReport();
             }
 
+            // Complete ADO test run AFTER professional report to ensure all artifacts are included in zip
+            await this.adoIntegration.afterAllTests();
+
         } catch (error: any) {
             CSReporter.error(`Test execution failed: ${error.message}`);
             throw error;
@@ -554,8 +557,8 @@ export class CSBDDRunner {
         await this.adoIntegration.collectScenarios(allScenarios);
 
         // Start ADO test run with collected test points
-        const testRunName = `PTF Test Run - ${new Date().toISOString()}`;
-        await this.adoIntegration.beforeAllTests(testRunName);
+        // Don't pass a name - let ADOPublisher generate one based on feature name
+        await this.adoIntegration.beforeAllTests();
 
         // Handle different types of parallel values (boolean true, number, etc.)
         let parallel = 1;
@@ -580,9 +583,6 @@ export class CSBDDRunner {
         } else {
             await this.executeSequential(features, options);
         }
-
-        // Complete ADO test run if enabled
-        await this.adoIntegration.afterAllTests();
     }
 
     private shouldExecuteScenario(scenario: ParsedScenario, feature: ParsedFeature, options: RunOptions): boolean {
@@ -751,6 +751,9 @@ export class CSBDDRunner {
 
             // Mark parallel execution as done to prevent regular report generation from overwriting
             this.parallelExecutionDone = true;
+
+            // Complete ADO test run AFTER all reports are generated to ensure zip includes everything
+            await this.adoIntegration.afterAllTests();
 
             CSReporter.info(`Parallel execution completed: ${passed} passed, ${failed} failed, ${skipped} skipped`);
 
@@ -928,7 +931,7 @@ export class CSBDDRunner {
                 this.currentFeature.duration = featureEndTime.getTime() - this.currentFeature.startTime.getTime();
                 
                 // Calculate feature status (cast to any to avoid TypeScript issues)
-                const hasFailedScenarios = this.currentFeature.scenarios.some(s => s.status === 'failed');
+                const hasFailedScenarios = this.currentFeature.scenarios.some((s: any) => s.status === 'failed');
                 (this.currentFeature as any).status = hasFailedScenarios ? 'failed' : 'passed';
             }
             
@@ -946,11 +949,19 @@ export class CSBDDRunner {
 
             CSReporter.debug(`Examples loaded: ${examples.rows.length} rows`);
             if (examples.rows.length > 0) {
+                // Track which columns are actually used in the scenario steps
+                const usedColumns = this.findUsedColumnsInScenario(scenario, examples.headers);
+                CSReporter.info(`📊 Data-driven test using ${usedColumns.size} of ${examples.headers.length} columns: ${Array.from(usedColumns).join(', ')}`);
+
                 let iterationNumber = 1;
                 for (const row of examples.rows) {
-                    await this.executeSingleScenario(scenario, feature, options, row, examples.headers, iterationNumber, examples.rows.length, scenario.examples);
+                    await this.executeSingleScenario(scenario, feature, options, row, examples.headers, iterationNumber, examples.rows.length, scenario.examples, usedColumns);
                     iterationNumber++;
                 }
+
+                // After all iterations, trigger ADO to publish aggregated results
+                // Call afterScenario without iteration to signal completion of all iterations
+                await this.adoIntegration.afterScenario(scenario, feature, 'completed', 0);
             } else {
                 CSReporter.warn(`No data rows for scenario: ${scenario.name}`);
             }
@@ -967,8 +978,12 @@ export class CSBDDRunner {
         exampleHeaders?: string[],
         iterationNumber?: number,
         totalIterations?: number,
-        originalExamples?: any
+        originalExamples?: any,
+        usedColumns?: Set<string>
     ): Promise<void> {
+        // Track scenario start time for accurate duration
+        const scenarioStartTime = Date.now();
+
         let scenarioName = this.interpolateScenarioName(scenario.name, exampleRow, exampleHeaders);
 
         // Add iteration number to scenario name for data-driven tests
@@ -1018,9 +1033,26 @@ export class CSBDDRunner {
             await this.captureArtifactsIfNeeded('passed');
 
             // ADO: After scenario hook - passed
-            const duration = Date.now() - Date.parse(CSReporter.getResults().slice(-1)[0]?.timestamp || new Date().toISOString());
+            const duration = Date.now() - scenarioStartTime;  // Calculate accurate duration from scenario start
             const artifacts = this.collectScenarioArtifacts();
-            await this.adoIntegration.afterScenario(scenario, feature, 'passed', duration, undefined, artifacts);
+
+            // Pass iteration data if this is a data-driven scenario
+            let iterationData = exampleRow && exampleHeaders ?
+                Object.fromEntries(exampleHeaders.map((h, i) => [h, exampleRow[i]])) : undefined;
+
+            // Filter iteration data to only include used columns if provided
+            if (iterationData && usedColumns && usedColumns.size > 0) {
+                const filteredData: any = {};
+                for (const [key, value] of Object.entries(iterationData)) {
+                    if (usedColumns.has(key)) {
+                        filteredData[key] = value;
+                    }
+                }
+                iterationData = filteredData;
+                CSReporter.debug(`Filtered iteration data to ${Object.keys(filteredData).length} used columns for ADO`);
+            }
+
+            await this.adoIntegration.afterScenario(scenario, feature, 'passed', duration, undefined, artifacts, undefined, iterationNumber, iterationData);
 
         } catch (error: any) {
             CSReporter.failScenario(error.message);
@@ -1047,9 +1079,30 @@ export class CSBDDRunner {
             this.anyTestFailed = true;  // Track that at least one test failed
 
             // ADO: After scenario hook - failed
-            const duration = Date.now() - Date.parse(CSReporter.getResults().slice(-1)[0]?.timestamp || new Date().toISOString());
+            const duration = Date.now() - scenarioStartTime;  // Calculate accurate duration from scenario start
             const artifacts = this.collectScenarioArtifacts();
-            await this.adoIntegration.afterScenario(scenario, feature, 'failed', duration, error.message, artifacts);
+            const errorWithStack = {
+                message: error.message || String(error),
+                stack: error.stack || new Error().stack
+            };
+
+            // Pass iteration data if this is a data-driven scenario
+            let iterationData = exampleRow && exampleHeaders ?
+                Object.fromEntries(exampleHeaders.map((h, i) => [h, exampleRow[i]])) : undefined;
+
+            // Filter iteration data to only include used columns if provided
+            if (iterationData && usedColumns && usedColumns.size > 0) {
+                const filteredData: any = {};
+                for (const [key, value] of Object.entries(iterationData)) {
+                    if (usedColumns.has(key)) {
+                        filteredData[key] = value;
+                    }
+                }
+                iterationData = filteredData;
+                CSReporter.debug(`Filtered iteration data to ${Object.keys(filteredData).length} used columns for ADO`);
+            }
+
+            await this.adoIntegration.afterScenario(scenario, feature, 'failed', duration, errorWithStack.message, artifacts, errorWithStack.stack, iterationNumber, iterationData);
             
         } finally {
             // Execute after hooks
@@ -1255,7 +1308,33 @@ export class CSBDDRunner {
             this.scenarioContext.clearCurrentStep();
         }
     }
-    
+
+    private findUsedColumnsInScenario(scenario: ParsedScenario, headers: string[]): Set<string> {
+        const usedColumns = new Set<string>();
+
+        // Check scenario name for placeholders
+        const namePattern = /<([^>]+)>/g;
+        let match;
+        while ((match = namePattern.exec(scenario.name)) !== null) {
+            if (headers.includes(match[1])) {
+                usedColumns.add(match[1]);
+            }
+        }
+
+        // Check all step texts for placeholders
+        scenario.steps.forEach(step => {
+            let stepMatch;
+            const stepPattern = /<([^>]+)>/g;
+            while ((stepMatch = stepPattern.exec(step.text)) !== null) {
+                if (headers.includes(stepMatch[1])) {
+                    usedColumns.add(stepMatch[1]);
+                }
+            }
+        });
+
+        return usedColumns;
+    }
+
     private interpolateScenarioName(name: string, row?: string[], headers?: string[]): string {
         if (!row || !headers) return name;
         
@@ -1422,7 +1501,11 @@ export class CSBDDRunner {
 
         return {
             ...scenarioData,
-            artifacts
+            artifacts,
+            // Include iteration info for ADO integration
+            iterationNumber: iterationNumber,
+            iterationData: exampleRow && exampleHeaders ?
+                Object.fromEntries(exampleHeaders.map((h, i) => [h, exampleRow[i]])) : undefined
         };
     }
 
@@ -1507,17 +1590,17 @@ export class CSBDDRunner {
             // Convert testSuite to CSWorldClassReportGenerator format
             const worldClassSuite = {
                 name: this.testSuite.name,
-                scenarios: this.testSuite.features.flatMap(f => f.scenarios.map(s => ({
+                scenarios: this.testSuite.features.flatMap((f: any) => f.scenarios.map((s: any) => ({
                     name: s.name,
                     status: s.status === 'broken' ? 'failed' : (s.status as 'passed' | 'failed' | 'skipped'),
                     feature: f.name,
                     tags: s.tags || [],
-                    steps: s.steps.map(step => ({
+                    steps: s.steps.map((step: any) => ({
                         name: step.name,
                         status: step.status === 'pending' ? 'skipped' : (step.status as 'passed' | 'failed' | 'skipped'),
                         duration: step.duration,
                         error: step.error?.message,
-                        logs: (step.logs || []).map(log => `[${log.level}] ${log.message}`),
+                        logs: (step.logs || []).map((log: any) => `[${log.level}] ${log.message}`),
                         actions: (step as any).actions || [],
                         screenshot: (step as any).screenshot
                     })),

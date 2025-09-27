@@ -1,4 +1,7 @@
-import { Page, BrowserContext } from '@playwright/test';
+// Lazy load Playwright types for performance
+// import { Page, BrowserContext } from '@playwright/test';
+type Page = any;
+type BrowserContext = any;
 import { CSPageFactory } from '../core/CSPageFactory';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
@@ -8,8 +11,8 @@ import { CSScenarioContext } from './CSScenarioContext';
 export class CSBDDContext {
     private static instance: CSBDDContext;
     
-    public page!: Page;
-    public browserContext!: BrowserContext;
+    public page!: any; // Page type from Playwright
+    public browserContext!: any; // BrowserContext type from Playwright
     public pageFactory!: CSPageFactory;
     public config: CSConfigurationManager;
     
@@ -36,7 +39,7 @@ export class CSBDDContext {
         return CSBDDContext.instance;
     }
     
-    public async initialize(page: Page, browserContext: BrowserContext): Promise<void> {
+    public async initialize(page: any, browserContext: any): Promise<void> {
         this.page = page;
         this.browserContext = browserContext;
         this.pageFactory = new CSPageFactory(page);

@@ -1,5 +1,7 @@
 import 'reflect-metadata';
-import { Page } from '@playwright/test';
+// Lazy load Playwright for performance
+// import { Page } from '@playwright/test';
+type Page = any;
 import { CSBasePage } from './CSBasePage';
 import { CSWebElement } from '../element/CSWebElement';
 import { CSReporter } from '../reporter/CSReporter';

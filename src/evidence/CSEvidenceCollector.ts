@@ -1,9 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as JSZip from 'jszip';
-import { Page } from '@playwright/test';
+// Lazy load Playwright for performance
+// import { Page } from '@playwright/test';
+type Page = any;
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
-import { CSBrowserManager } from '../browser/CSBrowserManager';
+// Lazy load BrowserManager
+// import { CSBrowserManager } from '../browser/CSBrowserManager';
+let CSBrowserManager: any = null;
 import { CSReporter } from '../reporter/CSReporter';
 
 export interface Evidence {
@@ -38,7 +42,7 @@ export interface NetworkEntry {
 export class CSEvidenceCollector {
     private static instance: CSEvidenceCollector;
     private config: CSConfigurationManager;
-    private browserManager: CSBrowserManager;
+    private browserManager: any; // CSBrowserManager - lazy loaded
     private evidence: Map<string, Evidence> = new Map();
     private consoleLog: LogEntry[] = [];
     private networkLog: NetworkEntry[] = [];
@@ -47,6 +51,10 @@ export class CSEvidenceCollector {
     
     private constructor() {
         this.config = CSConfigurationManager.getInstance();
+        // Lazy load CSBrowserManager
+        if (!CSBrowserManager) {
+            CSBrowserManager = require('../browser/CSBrowserManager').CSBrowserManager;
+        }
         this.browserManager = CSBrowserManager.getInstance();
         this.evidencePath = path.join(
             process.cwd(),
@@ -78,7 +86,7 @@ export class CSEvidenceCollector {
         const page = this.browserManager.getPage();
         
         // Start collecting console logs
-        page.on('console', (msg) => {
+        page.on('console', (msg: any) => {
             this.consoleLog.push({
                 type: msg.type(),
                 text: msg.text(),
@@ -88,7 +96,7 @@ export class CSEvidenceCollector {
         });
         
         // Start collecting network logs
-        page.on('request', (request) => {
+        page.on('request', (request: any) => {
             const entry: NetworkEntry = {
                 url: request.url(),
                 method: request.method(),
@@ -100,7 +108,7 @@ export class CSEvidenceCollector {
             this.networkLog.push(entry);
         });
         
-        page.on('response', (response) => {
+        page.on('response', (response: any) => {
             const entry = this.networkLog.find(e => e.url === response.url());
             if (entry) {
                 entry.status = response.status();

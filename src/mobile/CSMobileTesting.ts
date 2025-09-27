@@ -1,7 +1,14 @@
-import { BrowserContext, Page, devices } from '@playwright/test';
+// Lazy load Playwright for performance
+// import { BrowserContext, Page, devices } from '@playwright/test';
+type BrowserContext = any;
+type Page = any;
+let devices: any = null;
+
 import { CSReporter } from '../reporter/CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
-import { CSBrowserManager } from '../browser/CSBrowserManager';
+// Lazy load BrowserManager
+// import { CSBrowserManager } from '../browser/CSBrowserManager';
+let CSBrowserManager: any = null;
 
 export interface MobileDevice {
     name: string;
@@ -27,10 +34,10 @@ export interface TouchPoint {
 export class CSMobileTesting {
     private static instance: CSMobileTesting;
     private config: CSConfigurationManager;
-    private browserManager: CSBrowserManager;
+    private browserManager: any; // CSBrowserManager - lazy loaded
     private currentDevice: MobileDevice | null = null;
-    private currentContext: BrowserContext | null = null;
-    private currentPage: Page | null = null;
+    private currentContext: any | null = null; // BrowserContext
+    private currentPage: any | null = null; // Page
     
     // Custom device configurations
     private customDevices: Map<string, MobileDevice> = new Map();
@@ -100,7 +107,7 @@ export class CSMobileTesting {
                 forcedColors: this.config.get('FORCED_COLORS', 'none') as any
             });
             
-            this.currentPage = await this.currentContext.newPage();
+            this.currentPage = await this.currentContext!.newPage();
             this.currentDevice = deviceConfig as MobileDevice;
             
             CSReporter.endStep('pass');
@@ -129,7 +136,7 @@ export class CSMobileTesting {
         await this.currentPage.setViewportSize(newViewport);
         
         // Dispatch orientation change event
-        await this.currentPage.evaluate((orient) => {
+        await this.currentPage.evaluate((orient: any) => {
             window.dispatchEvent(new Event('orientationchange'));
             (window as any).orientation = orient === 'landscape' ? 90 : 0;
         }, orientation);
@@ -273,7 +280,7 @@ export class CSMobileTesting {
         const finger2End = { x: centerX + distance * scale, y: centerY };
         
         // This is a simplified simulation
-        await this.currentPage.evaluate(({ scale }) => {
+        await this.currentPage.evaluate(({ scale }: any) => {
             const event = new WheelEvent('wheel', {
                 deltaY: scale < 1 ? 100 : -100,
                 ctrlKey: true

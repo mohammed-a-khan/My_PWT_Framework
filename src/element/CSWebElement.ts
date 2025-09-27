@@ -1,5 +1,13 @@
-import { Page, Locator, ElementHandle, FrameLocator, JSHandle } from '@playwright/test';
-import { CSBrowserManager } from '../browser/CSBrowserManager';
+// Lazy load Playwright and BrowserManager for performance
+// import { Page, Locator, ElementHandle, FrameLocator, JSHandle } from '@playwright/test';
+// import { CSBrowserManager } from '../browser/CSBrowserManager';
+type Page = any;
+type Locator = any;
+type ElementHandle = any;
+type FrameLocator = any;
+type JSHandle = any;
+let CSBrowserManager: any = null;
+
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
 import { CSSelfHealingEngine } from '../self-healing/CSSelfHealingEngine';
@@ -293,7 +301,15 @@ export class CSWebElement {
     constructor(options: ElementOptions, page?: Page) {
         this.config = CSConfigurationManager.getInstance();
         this.selfHealingEngine = CSSelfHealingEngine.getInstance();
-        this.page = page || CSBrowserManager.getInstance().getPage();
+        // Lazy load CSBrowserManager when needed
+        if (!page) {
+            if (!CSBrowserManager) {
+                CSBrowserManager = require('../browser/CSBrowserManager').CSBrowserManager;
+            }
+            this.page = CSBrowserManager.getInstance().getPage();
+        } else {
+            this.page = page;
+        }
         this.options = options;
         this.description = options.description || 'Element';
         this.retryCount = options.retryCount || this.config.getNumber('ELEMENT_RETRY_COUNT', 3);
@@ -1128,9 +1144,9 @@ export class CSWebElement {
         });
     }
 
-    async evaluateHandle<R, Arg>(pageFunction: (element: Element, arg: Arg) => R | Promise<R>, arg: Arg, options?: EvaluateHandleOptions): Promise<JSHandle<R>>;
-    async evaluateHandle<R>(pageFunction: (element: Element) => R | Promise<R>, arg?: any, options?: EvaluateHandleOptions): Promise<JSHandle<R>>;
-    async evaluateHandle<R>(pageFunction: any, arg?: any, options?: EvaluateHandleOptions): Promise<JSHandle<R>> {
+    async evaluateHandle<R, Arg>(pageFunction: (element: Element, arg: Arg) => R | Promise<R>, arg: Arg, options?: EvaluateHandleOptions): Promise<JSHandle>;
+    async evaluateHandle<R>(pageFunction: (element: Element) => R | Promise<R>, arg?: any, options?: EvaluateHandleOptions): Promise<JSHandle>;
+    async evaluateHandle<R>(pageFunction: any, arg?: any, options?: EvaluateHandleOptions): Promise<JSHandle> {
         return this.executeAction('Evaluate handle', async () => {
             const locator = await this.getLocator();
             return await locator.evaluateHandle(pageFunction, arg);
@@ -1434,7 +1450,15 @@ export class CSElements {
     constructor(options: ElementOptions, page?: Page) {
         this.options = options;
         this.elements = [];
-        this.page = page || CSBrowserManager.getInstance().getPage();
+        // Lazy load CSBrowserManager when needed
+        if (!page) {
+            if (!CSBrowserManager) {
+                CSBrowserManager = require('../browser/CSBrowserManager').CSBrowserManager;
+            }
+            this.page = CSBrowserManager.getInstance().getPage();
+        } else {
+            this.page = page;
+        }
     }
     
     async getAll(): Promise<CSWebElement[]> {

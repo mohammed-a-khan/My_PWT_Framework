@@ -6,6 +6,7 @@
 
 import { ParsedScenario, ParsedFeature } from '../bdd/CSBDDEngine';
 import { CSReporter } from '../reporter/CSReporter';
+import { CSConfigurationManager } from '../core/CSConfigurationManager';
 
 export interface ADOMetadata {
     testPlanId?: number;
@@ -18,6 +19,7 @@ export interface ADOMetadata {
 
 export class CSADOTagExtractor {
     private static instance: CSADOTagExtractor;
+    private config: CSConfigurationManager;
 
     // Patterns for extracting IDs from tags
     private static readonly PATTERNS = {
@@ -33,7 +35,9 @@ export class CSADOTagExtractor {
         RELEASE: /@ReleaseId:(\d+)/i,
     };
 
-    private constructor() {}
+    private constructor() {
+        this.config = CSConfigurationManager.getInstance();
+    }
 
     public static getInstance(): CSADOTagExtractor {
         if (!CSADOTagExtractor.instance) {
@@ -43,33 +47,110 @@ export class CSADOTagExtractor {
     }
 
     /**
-     * Extract ADO metadata from scenario and feature tags
-     * Supports multiple test case IDs in format: @TestCaseId:{419,420,421}
+     * Extract ADO metadata from scenario and feature tags with proper inheritance
+     * Hierarchy: Scenario > Feature > Config
+     * Supports mix-and-match (e.g., feature plan with scenario suite)
      */
     public extractMetadata(scenario: ParsedScenario, feature?: ParsedFeature): ADOMetadata {
         const metadata: ADOMetadata = {
             testCaseIds: []
         };
 
-        // Combine tags from scenario and feature (scenario takes precedence)
         const scenarioTags = scenario.tags || [];
         const featureTags = feature?.tags || [];
-        const allTags = [...scenarioTags, ...featureTags];
 
-        CSReporter.debug(`Extracting ADO metadata from tags: ${allTags.join(', ')}`);
+        CSReporter.debug(`Extracting ADO metadata from tags: ${[...featureTags, ...scenarioTags].join(', ')}`);
 
-        // Process each tag
-        for (const tag of allTags) {
-            this.extractTestCaseIds(tag, metadata);
-            this.extractTestPlanId(tag, metadata);
-            this.extractTestSuiteId(tag, metadata);
-            this.extractBuildId(tag, metadata);
-            this.extractReleaseId(tag, metadata);
+        // Extract feature-level plan and suite (defaults)
+        let featurePlanId: number | undefined;
+        let featureSuiteId: number | undefined;
+        let featureBuildId: string | undefined;
+        let featureReleaseId: string | undefined;
+
+        for (const tag of featureTags) {
+            if (!featurePlanId) {
+                const planMatch = tag.match(CSADOTagExtractor.PATTERNS.TEST_PLAN);
+                if (planMatch) {
+                    featurePlanId = parseInt(planMatch[1]);
+                    CSReporter.debug(`Found feature-level test plan ID: ${featurePlanId}`);
+                }
+            }
+            if (!featureSuiteId) {
+                const suiteMatch = tag.match(CSADOTagExtractor.PATTERNS.TEST_SUITE);
+                if (suiteMatch) {
+                    featureSuiteId = parseInt(suiteMatch[1]);
+                    CSReporter.debug(`Found feature-level test suite ID: ${featureSuiteId}`);
+                }
+            }
+            if (!featureBuildId) {
+                const buildMatch = tag.match(CSADOTagExtractor.PATTERNS.BUILD);
+                if (buildMatch) {
+                    featureBuildId = buildMatch[1];
+                }
+            }
+            if (!featureReleaseId) {
+                const releaseMatch = tag.match(CSADOTagExtractor.PATTERNS.RELEASE);
+                if (releaseMatch) {
+                    featureReleaseId = releaseMatch[1];
+                }
+            }
         }
+
+        // Extract scenario-level IDs (overrides)
+        let scenarioPlanId: number | undefined;
+        let scenarioSuiteId: number | undefined;
+        let scenarioBuildId: string | undefined;
+        let scenarioReleaseId: string | undefined;
+
+        for (const tag of scenarioTags) {
+            // Extract test case IDs (only from scenario level)
+            this.extractTestCaseIds(tag, metadata);
+
+            if (!scenarioPlanId) {
+                const planMatch = tag.match(CSADOTagExtractor.PATTERNS.TEST_PLAN);
+                if (planMatch) {
+                    scenarioPlanId = parseInt(planMatch[1]);
+                    CSReporter.debug(`Found scenario-level test plan ID: ${scenarioPlanId}`);
+                }
+            }
+            if (!scenarioSuiteId) {
+                const suiteMatch = tag.match(CSADOTagExtractor.PATTERNS.TEST_SUITE);
+                if (suiteMatch) {
+                    scenarioSuiteId = parseInt(suiteMatch[1]);
+                    CSReporter.debug(`Found scenario-level test suite ID: ${scenarioSuiteId}`);
+                }
+            }
+            if (!scenarioBuildId) {
+                const buildMatch = tag.match(CSADOTagExtractor.PATTERNS.BUILD);
+                if (buildMatch) {
+                    scenarioBuildId = buildMatch[1];
+                }
+            }
+            if (!scenarioReleaseId) {
+                const releaseMatch = tag.match(CSADOTagExtractor.PATTERNS.RELEASE);
+                if (releaseMatch) {
+                    scenarioReleaseId = releaseMatch[1];
+                }
+            }
+        }
+
+        // Apply inheritance rules: Scenario > Feature > Config
+        metadata.testPlanId = scenarioPlanId || featurePlanId || this.config.getNumber('ADO_TEST_PLAN_ID');
+        metadata.testSuiteId = scenarioSuiteId || featureSuiteId || this.config.getNumber('ADO_TEST_SUITE_ID');
+        metadata.buildId = scenarioBuildId || featureBuildId;
+        metadata.releaseId = scenarioReleaseId || featureReleaseId;
 
         // Set primary test case ID (first one in the list)
         if (metadata.testCaseIds.length > 0) {
             metadata.testCaseId = metadata.testCaseIds[0];
+        }
+
+        // Log inheritance decisions
+        if (scenarioPlanId && featurePlanId && scenarioPlanId !== featurePlanId) {
+            CSReporter.debug(`Using scenario plan ${scenarioPlanId} (overrides feature plan ${featurePlanId})`);
+        }
+        if (scenarioSuiteId && featureSuiteId && scenarioSuiteId !== featureSuiteId) {
+            CSReporter.debug(`Using scenario suite ${scenarioSuiteId} (overrides feature suite ${featureSuiteId})`);
         }
 
         if (metadata.testCaseIds.length > 0 || metadata.testPlanId || metadata.testSuiteId) {
