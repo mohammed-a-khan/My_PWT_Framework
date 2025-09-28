@@ -513,8 +513,8 @@ export class CSADOPublisher {
             // Build comprehensive comment
             const comment = `Data-Driven Test Results (${iterations.length} iterations)\n` +
                            `Overall Status: ${overallOutcome}\n\n` +
-                           `Iteration Results:\n${iterationSummaries.join('\n')}\n\n` +
-                           (failedIterations.length > 0 ? `Failed Iterations Details:\n${failedIterations.join('\n')}` : 'All iterations passed');
+                           `Iteration Results:\n${iterationSummaries.join('\n')}` +
+                           (failedIterations.length > 0 ? `\n\nFailed Iterations Details:\n${failedIterations.join('\n')}` : '');
 
             // Create aggregated error message if there are failures
             const aggregatedError = failedIterations.length > 0 ?
