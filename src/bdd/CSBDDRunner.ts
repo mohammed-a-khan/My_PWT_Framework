@@ -1115,12 +1115,25 @@ export class CSBDDRunner {
                 CSReporter.warn(`After hook failed: ${hookError}`);
             }
 
-            // Clean up browser context
-            const configManager = CSConfigurationManager.getInstance();
-            if (!configManager.getBoolean('BROWSER_REUSE_ENABLED', false)) {
-                const browserManager = await this.ensureBrowserManager();
-                await browserManager.close();
+            // Determine scenario status for cleanup (similar to regular executeSingleScenario)
+            let scenarioStatus: 'passed' | 'failed' = 'passed'; // Default to passed
+            try {
+                const reporterResults = CSReporter.getResults();
+                if (reporterResults.length > 0) {
+                    const lastResult = reporterResults[reporterResults.length - 1];
+                    scenarioStatus = lastResult.status === 'pass' ? 'passed' : 'failed';
+                }
+            } catch (statusError) {
+                CSReporter.debug(`Failed to determine scenario status: ${statusError}`);
+                scenarioStatus = 'failed'; // Default to failed on error
             }
+
+            // Perform scenario cleanup (clears browser state if BROWSER_REUSE_CLEAR_STATE=true)
+            // This is critical for data-driven tests to have clean state between iterations
+            await this.performScenarioCleanup(options, scenarioStatus);
+
+            // Note: performScenarioCleanup already handles browser closing when needed
+            // so we don't need the separate browser close logic here
         }
     }
 
@@ -2013,22 +2026,54 @@ export class CSBDDRunner {
                     // Keep browser open but clear state if configured
                     if (clearStateOnReuse) {
                         try {
-                            const context = this.browserManager.getContext();
-                            if (context) {
-                                // Clear cookies and local storage
+                            CSReporter.info('BROWSER_REUSE_CLEAR_STATE=true: Starting browser state cleanup...');
+
+                            // Get context and page
+                            let context, page;
+                            try {
+                                context = this.browserManager.getContext();
+                                page = this.browserManager.getPage();
+                                CSReporter.debug(`Got context: ${!!context}, Got page: ${!!page}`);
+                            } catch (e) {
+                                CSReporter.error(`Failed to get context/page: ${e}`);
+                                throw e;
+                            }
+
+                            if (page && context) {
+                                // Step 1: Navigate to about:blank first to leave the application
+                                CSReporter.info('Navigating to about:blank to clear page state...');
+                                await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 5000 });
+                                CSReporter.info('Successfully navigated to about:blank');
+
+                                // Step 2: Clear all cookies at context level
+                                CSReporter.debug('Clearing all cookies...');
                                 await context.clearCookies();
+
+                                // Step 3: Clear permissions
+                                CSReporter.debug('Clearing permissions...');
                                 await context.clearPermissions();
 
-                                // Navigate to blank page to clear any page state
-                                const page = this.browserManager.getPage();
-                                if (page && !page.isClosed()) {
-                                    await page.goto('about:blank');
-                                }
+                                // Step 4: Clear localStorage and sessionStorage via JavaScript
+                                CSReporter.debug('Clearing localStorage and sessionStorage...');
+                                await page.evaluate(() => {
+                                    try {
+                                        localStorage.clear();
+                                        sessionStorage.clear();
+                                    } catch (e) {
+                                        // Ignore errors on about:blank
+                                    }
+                                });
 
-                                CSReporter.debug('Browser state cleared for reuse');
+                                // Step 5: Clear the saved browser state to prevent restoration
+                                this.browserManager.clearBrowserState();
+
+                                CSReporter.info('✓ Browser state completely cleared for reuse');
+                            } else {
+                                CSReporter.error(`Context or page is null - context: ${!!context}, page: ${!!page}`);
                             }
                         } catch (error) {
-                            CSReporter.debug(`Failed to clear browser state: ${error}`);
+                            CSReporter.error(`Failed to clear browser state: ${error}`);
+                            // Don't throw - we want to continue even if cleanup fails
                         }
                     } else {
                         CSReporter.debug('Browser kept open for reuse (state not cleared)');

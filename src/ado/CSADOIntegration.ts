@@ -54,7 +54,7 @@ export class CSADOIntegration {
         this.isInitialized = true;
 
         if (this.publisher.isEnabled()) {
-            CSReporter.info('Azure DevOps integration enabled');
+            // CSReporter.info('Azure DevOps integration enabled');
         }
     }
 
@@ -107,7 +107,7 @@ export class CSADOIntegration {
             missingPlanSuite.forEach(s => CSReporter.warn(`  - ${s}`));
         }
 
-        CSReporter.info('✅ ADO configuration validated successfully');
+        // CSReporter.info('✅ ADO configuration validated successfully');
         return true;
     }
 
@@ -160,7 +160,7 @@ export class CSADOIntegration {
 
         // Log if scenario has ADO mapping
         if (metadata.testCaseIds.length > 0) {
-            CSReporter.info(`Scenario mapped to ADO test cases: ${metadata.testCaseIds.join(', ')}`);
+            // CSReporter.info(`Scenario mapped to ADO test cases: ${metadata.testCaseIds.join(', ')}`);
         }
     }
 
@@ -176,7 +176,8 @@ export class CSADOIntegration {
         artifacts?: any,
         stackTrace?: string,
         iterationNumber?: number,
-        iterationData?: any
+        iterationData?: any,
+        comment?: string  // Add comment parameter for aggregated results
     ): Promise<void> {
         if (!this.publisher.isEnabled()) {
             return;
@@ -198,7 +199,8 @@ export class CSADOIntegration {
             stackTrace,
             artifacts,
             iteration: iterationNumber,
-            iterationData
+            iterationData,
+            comment  // Pass the comment to the result
         };
 
         if (this.isParallelMode) {
@@ -225,7 +227,7 @@ export class CSADOIntegration {
             }
 
             // For ADO, always create a zip file for attachment (regardless of REPORTS_ZIP_RESULTS flag)
-            CSReporter.info('Creating test results zip for ADO attachment...');
+            // CSReporter.info('Creating test results zip for ADO attachment...');
             const testResultsPath = await this.resultsManager.createTestResultsZip();
 
             // Complete the test run with results attachment

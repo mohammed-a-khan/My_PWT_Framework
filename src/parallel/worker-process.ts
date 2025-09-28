@@ -286,18 +286,32 @@ class WorkerProcess {
                             if (clearStateOnReuse) {
                                 try {
                                     const context = this.browserManager.getContext();
-                                    if (context) {
-                                        // Clear cookies and local storage
+                                    const page = this.browserManager.getPage();
+
+                                    if (page && context) {
+                                        // Step 1: Navigate to about:blank first to leave the application
+                                        await page.goto('about:blank');
+
+                                        // Step 2: Clear all cookies at context level
                                         await context.clearCookies();
+
+                                        // Step 3: Clear permissions
                                         await context.clearPermissions();
 
-                                        // Navigate to blank page to clear any page state
-                                        const page = this.browserManager.getPage();
-                                        if (page && !page.isClosed()) {
-                                            await page.goto('about:blank');
-                                        }
+                                        // Step 4: Clear localStorage and sessionStorage via JavaScript
+                                        await page.evaluate(() => {
+                                            try {
+                                                localStorage.clear();
+                                                sessionStorage.clear();
+                                            } catch (e) {
+                                                // Ignore errors on about:blank
+                                            }
+                                        });
 
-                                        console.log(`[Worker ${this.workerId}] Browser state cleared for reuse`);
+                                        // Step 5: Clear the saved browser state to prevent restoration
+                                        this.browserManager.clearBrowserState();
+
+                                        console.log(`[Worker ${this.workerId}] Browser state completely cleared for reuse`);
                                     }
                                 } catch (e) {
                                     console.debug(`[Worker ${this.workerId}] Failed to clear browser state: ${e}`);

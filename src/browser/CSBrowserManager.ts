@@ -313,8 +313,8 @@ export class CSBrowserManager {
             };
         }
 
-        // Restore state if switching browsers
-        if (this.browserState.cookies) {
+        // Restore state if switching browsers (but only if not explicitly cleared)
+        if (this.browserState.cookies && !this.config.getBoolean('BROWSER_REUSE_CLEAR_STATE', false)) {
             contextOptions.storageState = {
                 cookies: this.browserState.cookies,
                 origins: []
@@ -838,6 +838,11 @@ export class CSBrowserManager {
             throw new Error('Page not initialized');
         }
         return this.page;
+    }
+
+    public clearBrowserState(): void {
+        this.browserState = {};
+        CSReporter.debug('Browser state cleared - cookies will not be restored');
     }
 
     public getContext(): any {

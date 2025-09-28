@@ -351,26 +351,38 @@ export class ParallelOrchestrator {
                 const baseScenarioName = work.scenario.name.replace(/_Iteration-\d+$/, '');
                 const scenarioKey = `${work.feature.name}::${baseScenarioName}`;
 
+                CSReporter.debug(`Data-driven iteration ${work.iterationNumber}/${work.totalIterations} for ${scenarioKey}`);
+
                 if (!this.dataDrivenResults.has(scenarioKey)) {
                     this.dataDrivenResults.set(scenarioKey, []);
                 }
 
                 const iterations = this.dataDrivenResults.get(scenarioKey)!;
+
+                // Use testData from result if available, otherwise build from work item
+                const iterationData = result.testData ||
+                    (work.exampleRow ?
+                        Object.fromEntries(work.exampleHeaders?.map((h, i) => [h, work.exampleRow![i]]) || []) :
+                        undefined);
+
+                CSReporter.debug(`Iteration data for iteration ${work.iterationNumber}: ${JSON.stringify(iterationData)}`);
+
                 iterations.push({
                     iteration: work.iterationNumber,
                     status: result.status,
                     duration: result.duration,
                     errorMessage: result.error,
                     stackTrace: result.stackTrace,
-                    iterationData: work.exampleRow ?
-                        Object.fromEntries(work.exampleHeaders?.map((h, i) => [h, work.exampleRow![i]]) || []) :
-                        undefined
+                    iterationData: iterationData
                 });
 
                 // Check if all iterations for this scenario are complete
                 if (iterations.length === work.totalIterations) {
+                    CSReporter.info(`All ${work.totalIterations} iterations complete for ${baseScenarioName}. Publishing aggregated result to ADO...`);
                     // All iterations complete, publish aggregated result to ADO
                     await this.publishAggregatedResult(scenarioKey, work, iterations);
+                } else {
+                    CSReporter.debug(`Waiting for more iterations: ${iterations.length}/${work.totalIterations} complete`);
                 }
             } else {
                 // Regular scenario or single test - publish immediately
@@ -409,8 +421,11 @@ export class ParallelOrchestrator {
 
     private async publishAggregatedResult(scenarioKey: string, work: WorkItem, iterations: any[]) {
         if (!this.adoIntegration?.isEnabled()) {
+            CSReporter.debug(`ADO integration not enabled, skipping aggregated publish`);
             return;
         }
+
+        CSReporter.info(`Publishing aggregated ADO result for ${scenarioKey} with ${iterations.length} iterations`);
 
         // Sort iterations by iteration number
         iterations.sort((a, b) => a.iteration - b.iteration);
@@ -419,56 +434,104 @@ export class ParallelOrchestrator {
         const hasFailure = iterations.some(iter => iter.status === 'failed');
         const overallOutcome = hasFailure ? 'Failed' : 'Passed';
 
+        // Calculate pass/fail counts
+        const passedCount = iterations.filter(iter => iter.status === 'passed').length;
+        const failedCount = iterations.filter(iter => iter.status === 'failed').length;
+
         // Build detailed summary for all iterations
         const iterationSummaries: string[] = [];
-        const failedIterations: string[] = [];
+        const failedIterations: number[] = [];
         let totalDuration = 0;
         let firstStackTrace: string | undefined;
+        let firstErrorMessage: string | undefined;
 
         for (const iter of iterations) {
             totalDuration += iter.duration || 0;
 
-            let iterSummary = `Iteration ${iter.iteration}`;
-            if (iter.iterationData) {
-                const params = Object.entries(iter.iterationData)
-                    .map(([key, value]) => `${key}=${value}`)
-                    .join(', ');
-                iterSummary += ` [${params}]`;
-            }
-            iterSummary += `: ${iter.status === 'passed' ? '✅ Passed' : '❌ Failed'}`;
-
-            iterationSummaries.push(iterSummary);
-
             if (iter.status === 'failed') {
-                let failedDetail = `  - ${iterSummary}`;
-                if (iter.errorMessage) {
-                    failedDetail += `\n    Error: ${iter.errorMessage}`;
+                failedIterations.push(iter.iteration);
+
+                // Keep the first error and stack trace
+                if (!firstErrorMessage && iter.errorMessage) {
+                    firstErrorMessage = iter.errorMessage;
                 }
-                if (iter.stackTrace) {
-                    failedDetail += `\n    Stack Trace: ${iter.stackTrace}`;
-                    // Keep the first stack trace for the main error
-                    if (!firstStackTrace) {
-                        firstStackTrace = iter.stackTrace;
+                if (!firstStackTrace && iter.stackTrace) {
+                    firstStackTrace = iter.stackTrace;
+                }
+
+                // For detailed summary (only if we have space)
+                if (iterations.length <= 10) {
+                    let iterSummary = `Iteration ${iter.iteration}`;
+                    if (iter.iterationData) {
+                        const params = Object.entries(iter.iterationData)
+                            .slice(0, 3) // Limit to first 3 params to save space
+                            .map(([key, value]) => `${key}=${value}`)
+                            .join(', ');
+                        iterSummary += ` [${params}]`;
                     }
+                    iterSummary += `: ❌ Failed`;
+                    if (iter.errorMessage) {
+                        // Truncate error message if too long
+                        const errorMsg = iter.errorMessage.length > 50
+                            ? iter.errorMessage.substring(0, 47) + '...'
+                            : iter.errorMessage;
+                        iterSummary += ` - ${errorMsg}`;
+                    }
+                    iterationSummaries.push(iterSummary);
                 }
-                failedIterations.push(failedDetail);
             }
         }
 
-        // Build comprehensive comment
-        const comment = `Data-Driven Test Results (${iterations.length} iterations)\n` +
-                       `Overall Status: ${overallOutcome}\n\n` +
-                       `Iteration Results:\n${iterationSummaries.join('\n')}\n\n` +
-                       (failedIterations.length > 0 ? `Failed Iterations Details:\n${failedIterations.join('\n')}` : 'All iterations passed');
+        // Build comprehensive comment (limited to 1000 chars for ADO)
+        let comment = '';
+
+        // Simple clean format for parallel execution
+        const iterationLines: string[] = [];
+
+        for (const [idx, iter] of iterations.entries()) {
+            const iterNum = iter.iteration || idx + 1;
+            if (iter.status === 'passed') {
+                iterationLines.push(`Iteration-${iterNum} ✅ Passed`);
+            } else {
+                // Extract short error message
+                let shortError = '';
+                if (iter.errorMessage) {
+                    if (iter.errorMessage.includes('Element not found')) {
+                        shortError = ' [Error: Element not found]';
+                    } else if (iter.errorMessage.includes('Step definition not found')) {
+                        shortError = ' [Error: Missing step]';
+                    } else if (iter.errorMessage.includes('Timeout')) {
+                        shortError = ' [Error: Timeout]';
+                    } else {
+                        // Take first 30 chars of error
+                        shortError = ` [Error: ${iter.errorMessage.substring(0, 30)}]`;
+                    }
+                }
+                iterationLines.push(`Iteration-${iterNum} ❌ Failed${shortError}`);
+            }
+        }
+
+        // Build simple comment
+        comment = `Data-Driven Test Results (${iterations.length} iterations)\n` +
+                 `Overall Status: ${overallOutcome}\n\n` +
+                 iterationLines.join('\n');
+
+        // Truncate to 1000 characters if needed
+        if (comment.length > 1000) {
+            comment = comment.substring(0, 997) + '...';
+        }
 
         // Create aggregated error message if there are failures
-        const aggregatedError = failedIterations.length > 0 ?
-            `${failedIterations.length} of ${iterations.length} iterations failed. See comment for details.` :
+        const aggregatedError = failedCount > 0 ?
+            `${failedCount} of ${iterations.length} iterations failed. See comment for details.` :
             undefined;
 
         // Use the original scenario name without iteration suffix
         const baseScenario = { ...work.scenario };
         baseScenario.name = work.scenario.name.replace(/_Iteration-\d+$/, '');
+
+        CSReporter.info(`Aggregated ADO comment (${comment.length} chars):\n${comment}`);
+        CSReporter.debug(`Aggregated error message: ${aggregatedError || 'none'}`);
 
         // Publish aggregated result
         await this.adoIntegration.afterScenario(

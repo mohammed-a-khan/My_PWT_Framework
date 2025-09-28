@@ -99,11 +99,11 @@ export class CSADOClient {
         this.adoConfig = this.loadADOConfig();
 
         // Debug logging to verify correct values
-        CSReporter.debug(`ADO Organization: ${this.adoConfig.organization}`);
-        CSReporter.debug(`ADO Project: ${this.adoConfig.project}`);
+        // CSReporter.debug(`ADO Organization: ${this.adoConfig.organization}`);
+        // CSReporter.debug(`ADO Project: ${this.adoConfig.project}`);
 
         this.baseUrl = `https://dev.azure.com/${this.adoConfig.organization}/${this.adoConfig.project}/_apis`;
-        CSReporter.info(`ADO Base URL: ${this.baseUrl}`);
+        // CSReporter.info(`ADO Base URL: ${this.baseUrl}`);
 
         this.headers = {
             'Content-Type': 'application/json',
@@ -159,7 +159,7 @@ export class CSADOClient {
             this.proxyAgent = new HttpsProxyAgent(proxyUrl);
         }
         
-        CSReporter.info(`ADO proxy configured: ${proxyConfig.protocol}://${proxyConfig.host}:${proxyConfig.port}`);
+        // CSReporter.info(`ADO proxy configured: ${proxyConfig.protocol}://${proxyConfig.host}:${proxyConfig.port}`);
     }
     
     private decryptIfNeeded(value: string): string {
@@ -181,7 +181,7 @@ export class CSADOClient {
         const url = `${this.baseUrl}${endpoint}?api-version=${this.adoConfig.apiVersion}`;
         
         if (this.shouldBypassProxy(url)) {
-            CSReporter.debug(`Bypassing proxy for: ${url}`);
+            // CSReporter.debug(`Bypassing proxy for: ${url}`);
         }
         
         const timeout = this.config.getNumber('ADO_API_TIMEOUT', 30000);
@@ -210,7 +210,7 @@ export class CSADOClient {
     private executeRequest(method: string, url: string, data: any, timeout: number): Promise<any> {
         return new Promise((resolve, reject) => {
             // Debug log the actual URL being used
-            CSReporter.debug(`Making ADO request to: ${url}`);
+            // CSReporter.debug(`Making ADO request to: ${url}`);
 
             const urlObj = new URL(url);
 
@@ -261,7 +261,7 @@ export class CSADOClient {
     }
     
     public async getTestCase(testCaseId: number): Promise<TestCase> {
-        CSReporter.info(`Fetching test case: ${testCaseId}`);
+        // CSReporter.info(`Fetching test case: ${testCaseId}`);
         
         const response = await this.makeRequest('GET', `/test/testcases/${testCaseId}`);
         
@@ -306,7 +306,7 @@ export class CSADOClient {
             return;
         }
 
-        CSReporter.info(`Adding new test result for test case: ${result.testCaseId} in run: ${runId}`);
+        // CSReporter.info(`Adding new test result for test case: ${result.testCaseId} in run: ${runId}`);
 
         try {
             // Create a new test result for this iteration
@@ -323,7 +323,7 @@ export class CSADOClient {
                 comment: result.comment || `Automated test execution - ${new Date().toISOString()}`
             }];
 
-            CSReporter.debug(`Adding new test result with data: ${JSON.stringify(data, null, 2)}`);
+            // CSReporter.debug(`Adding new test result with data: ${JSON.stringify(data, null, 2)}`);
 
             const response = await this.makeRequest('POST', `/test/runs/${runId}/results`, data);
 
@@ -348,7 +348,7 @@ export class CSADOClient {
             return;
         }
 
-        CSReporter.info(`Updating test result for test case: ${result.testCaseId} in run: ${runId}`);
+        // CSReporter.info(`Updating test result for test case: ${result.testCaseId} in run: ${runId}`);
 
         try {
             // First, get the test results from the run to find the correct result ID
@@ -415,17 +415,17 @@ export class CSADOClient {
                     completedDate: iteration.completedDate || new Date().toISOString(),
                     parameters: iteration.parameters || []
                 }));
-                CSReporter.info(`✅ Sending ${result.iterationDetails.length} iterations to ADO`);
-                CSReporter.info(`📋 Iteration 1 details: ID=${data[0].iterationDetails[0].id}, Outcome=${data[0].iterationDetails[0].outcome}, Params=${JSON.stringify(data[0].iterationDetails[0].parameters)}`);
+                // CSReporter.info(`✅ Sending ${result.iterationDetails.length} iterations to ADO`);
+                // CSReporter.info(`📋 Iteration 1 details: ID=${data[0].iterationDetails[0].id}, Outcome=${data[0].iterationDetails[0].outcome}, Params=${JSON.stringify(data[0].iterationDetails[0].parameters)}`);
             }
 
             // Enable detailed debug logging to diagnose 500 error
-            CSReporter.debug(`Updating test result with data: ${JSON.stringify(data, null, 2)}`);
+            // CSReporter.debug(`Updating test result with data: ${JSON.stringify(data, null, 2)}`);
 
             const updateResponse = await this.makeRequest('PATCH', `/test/runs/${runId}/results`, data);
 
             if (updateResponse && updateResponse.value && updateResponse.value.length > 0) {
-                CSReporter.info(`✅ Test result updated for test case ${result.testCaseId}: ${result.outcome} (${result.duration}ms)`);
+                // CSReporter.info(`✅ Test result updated for test case ${result.testCaseId}: ${result.outcome} (${result.duration}ms)`);
             } else {
                 CSReporter.warn(`Test result update may have failed for test case ${result.testCaseId}`);
             }
@@ -440,7 +440,7 @@ export class CSADOClient {
             }
         }
         
-        CSReporter.info(`✅ Test result updated for test case ${result.testCaseId}: ${result.outcome}`);
+        // CSReporter.info(`✅ Test result updated for test case ${result.testCaseId}: ${result.outcome}`);
     }
     
     public async createBug(bug: Bug): Promise<number> {
@@ -448,7 +448,7 @@ export class CSADOClient {
             return 0;
         }
         
-        CSReporter.info(`Creating bug: ${bug.title}`);
+        // CSReporter.info(`Creating bug: ${bug.title}`);
         
         const data = [
             {
@@ -493,13 +493,13 @@ export class CSADOClient {
             }
         }
         
-        CSReporter.info(`Bug created with ID: ${bugId}`);
+        // CSReporter.info(`Bug created with ID: ${bugId}`);
         return bugId;
     }
     
     private async uploadAttachment(testCaseId: number, filePath: string): Promise<void> {
         // Simplified attachment upload
-        CSReporter.debug(`Uploading attachment for test case ${testCaseId}: ${filePath}`);
+        // CSReporter.debug(`Uploading attachment for test case ${testCaseId}: ${filePath}`);
         
         // In production, implement actual file upload
         await this.makeRequest('POST', `/test/testcases/${testCaseId}/attachments`, {
@@ -509,7 +509,7 @@ export class CSADOClient {
     }
     
     private async uploadBugAttachment(bugId: number, attachment: Attachment): Promise<void> {
-        CSReporter.debug(`Uploading attachment for bug ${bugId}: ${attachment.fileName}`);
+        // CSReporter.debug(`Uploading attachment for bug ${bugId}: ${attachment.fileName}`);
         
         // First upload the attachment
         const uploadResponse = await this.makeRequest('POST', '/wit/attachments', attachment.content);
@@ -534,12 +534,12 @@ export class CSADOClient {
     }
     
     public async getTestPlan(planId: number): Promise<any> {
-        CSReporter.info(`Fetching test plan: ${planId}`);
+        // CSReporter.info(`Fetching test plan: ${planId}`);
         return await this.makeRequest('GET', `/test/plans/${planId}`);
     }
     
     public async getTestSuite(planId: number, suiteId: number): Promise<any> {
-        CSReporter.info(`Fetching test suite: ${suiteId}`);
+        // CSReporter.info(`Fetching test suite: ${suiteId}`);
         return await this.makeRequest('GET', `/test/plans/${planId}/suites/${suiteId}`);
     }
 
@@ -558,7 +558,7 @@ export class CSADOClient {
     }
 
     public async fetchTestPoints(planId: number, suiteId: number): Promise<any[]> {
-        CSReporter.info(`Fetching test points for plan ${planId}, suite ${suiteId}`);
+        // CSReporter.info(`Fetching test points for plan ${planId}, suite ${suiteId}`);
         // Match Java framework: Use 'points' not 'testpoints'
         const response = await this.makeRequest('GET', `/test/plans/${planId}/suites/${suiteId}/points`);
 
@@ -570,19 +570,19 @@ export class CSADOClient {
                 // Try to find test case ID in various possible locations
                 return tp.testCase?.id || tp.testCaseReference?.id || tp.testCaseId || tp.workItem?.id || 'unknown';
             });
-            CSReporter.info(`Test points contain test case IDs: ${testCaseIds.join(', ')}`);
+            // CSReporter.info(`Test points contain test case IDs: ${testCaseIds.join(', ')}`);
         }
 
         // Cache the test points
         const cacheKey = `testpoints-${planId}-${suiteId}`;
         this.testPointsCache.set(cacheKey, testPoints);
 
-        CSReporter.info(`Fetched ${testPoints.length} test points`);
+        // CSReporter.info(`Fetched ${testPoints.length} test points`);
         return testPoints;
     }
     
     public async createTestRun(name: string, testPoints: number[], planId?: number): Promise<number> {
-        CSReporter.info(`Creating test run: ${name}`);
+        CSReporter.info(`Creating test run in ADO: ${name}`);
 
         const data: any = {
             name: name,
@@ -598,13 +598,13 @@ export class CSADOClient {
             // Plan ID is required when using test points
             if (planId) {
                 data.plan = { id: planId };
-                CSReporter.info(`Creating test run with ${testPoints.length} test points from plan ${planId}`);
+                // CSReporter.info(`Creating test run with ${testPoints.length} test points from plan ${planId}`);
             } else {
                 // Try to get plan ID from configuration as fallback
                 const configPlanId = this.config.getNumber('ADO_TEST_PLAN_ID');
                 if (configPlanId) {
                     data.plan = { id: configPlanId };
-                    CSReporter.info(`Creating test run with ${testPoints.length} test points from plan ${configPlanId} (from config)`);
+                    // CSReporter.info(`Creating test run with ${testPoints.length} test points from plan ${configPlanId} (from config)`);
                 } else {
                     // This will fail in ADO, but log for debugging
                     CSReporter.error(`Cannot create test run: Test points specified but no plan ID available`);
@@ -613,15 +613,15 @@ export class CSADOClient {
             }
         }
 
-        CSReporter.debug(`Test run creation payload: ${JSON.stringify(data, null, 2)}`);
+        // CSReporter.debug(`Test run creation payload: ${JSON.stringify(data, null, 2)}`);
 
         const response = await this.makeRequest('POST', '/test/runs', data);
-        CSReporter.info(`✅ Test run created successfully with ID: ${response.id}`);
+        CSReporter.info(`✅ Created test run in ADO - Test Run ID: ${response.id}`);
         return response.id;
     }
     
     public async completeTestRun(runId: number): Promise<void> {
-        CSReporter.info(`Completing test run: ${runId}`);
+        // CSReporter.info(`Completing test run: ${runId}`);
 
         const data = {
             state: 'Completed',
@@ -629,11 +629,11 @@ export class CSADOClient {
         };
 
         await this.makeRequest('PATCH', `/test/runs/${runId}`, data);
-        CSReporter.info(`✅ Test run ${runId} completed successfully`);
+        CSReporter.info(`✅ Test run completed in ADO - Run ID: ${runId}`);
     }
 
     public async uploadTestRunAttachment(runId: number, filePath: string, attachmentType: string = 'GeneralAttachment'): Promise<void> {
-        CSReporter.info(`Uploading attachment to test run ${runId}: ${path.basename(filePath)}`);
+        // CSReporter.info(`Uploading attachment to test run ${runId}: ${path.basename(filePath)}`);
 
         if (!fs.existsSync(filePath)) {
             CSReporter.error(`Attachment file not found: ${filePath}`);
@@ -646,7 +646,7 @@ export class CSADOClient {
             const fileName = path.basename(filePath);
             const fileStats = fs.statSync(filePath);
 
-            CSReporter.debug(`Uploading file: ${fileName} (${fileStats.size} bytes)`);
+            // CSReporter.debug(`Uploading file: ${fileName} (${fileStats.size} bytes)`);
 
             // Azure DevOps Test Run Attachments API
             // First, we need to upload the file content as a stream
@@ -661,7 +661,7 @@ export class CSADOClient {
             const response = await this.makeRequest('POST', `/test/runs/${runId}/attachments`, attachmentData);
 
             if (response && response.id) {
-                CSReporter.info(`✅ Attachment uploaded successfully to test run ${runId}: ${fileName} (ID: ${response.id})`);
+                // CSReporter.info(`✅ Attachment uploaded successfully to test run ${runId}: ${fileName} (ID: ${response.id}`);
             } else {
                 CSReporter.warn(`Attachment upload completed but no ID returned for: ${fileName}`);
             }
@@ -671,7 +671,7 @@ export class CSADOClient {
     }
     
     public async syncTestCases(featureFiles: string[]): Promise<void> {
-        CSReporter.info('Syncing test cases with Azure DevOps');
+        // CSReporter.info('Syncing test cases with Azure DevOps');
         
         // Parse feature files and sync with ADO
         // This is a placeholder for the actual implementation
@@ -680,9 +680,9 @@ export class CSADOClient {
             // Parse feature file
             // Match scenarios with test cases
             // Update test cases in ADO
-            CSReporter.debug(`Syncing feature file: ${featureFile}`);
+            // CSReporter.debug(`Syncing feature file: ${featureFile}`);
         }
         
-        CSReporter.info('Test case sync completed');
+        // CSReporter.info('Test case sync completed');
     }
 }

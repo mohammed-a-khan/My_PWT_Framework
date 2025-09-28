@@ -32,6 +32,7 @@ export interface ScenarioResult {
     stackTrace?: string;
     iteration?: number;  // For data-driven scenarios
     iterationData?: any; // Data for the current iteration
+    comment?: string;    // Custom comment for aggregated results
     artifacts?: {
         screenshots?: string[];
         videos?: string[];
@@ -79,11 +80,11 @@ export class CSADOPublisher {
             this.config.initialize();
 
             if (!this.config.isEnabled()) {
-                CSReporter.info('Azure DevOps integration is disabled');
+                // CSReporter.info('Azure DevOps integration is disabled');
                 return;
             }
 
-            CSReporter.info('Azure DevOps Publisher initialized');
+            // CSReporter.info('Azure DevOps Publisher initialized');
         } catch (error) {
             CSReporter.error(`Failed to initialize ADO Publisher: ${error}`);
             // Don't throw - ADO failure shouldn't block test execution
@@ -187,7 +188,7 @@ export class CSADOPublisher {
                             }
                         }
 
-                        CSReporter.info(`✓ Collected test point ${testPoint.id} for test case ${testCaseId}`);
+                        // CSReporter.info(`✓ Collected test point ${testPoint.id} for test case ${testCaseId}`);
                     } else {
                         CSReporter.warn(`No test point found for test case ${testCaseId} in plan ${metadata.testPlanId}, suite ${metadata.testSuiteId}`);
                         // Log structure of first test point for debugging
@@ -200,7 +201,7 @@ export class CSADOPublisher {
             }
         }
 
-        CSReporter.info(`Collected ${this.collectedTestPoints.size} test points for ADO test run`);
+        // CSReporter.info(`Collected ${this.collectedTestPoints.size} test points for ADO test run`);
     }
 
     /**
@@ -270,7 +271,7 @@ export class CSADOPublisher {
                         this.currentTestRun = testRun;
                     }
 
-                    CSReporter.info(`✅ ADO Test Run created with ID ${testRunId} for plan ${planId} with ${planSpecificPoints.length} test points`);
+                    // CSReporter.info(`✅ ADO Test Run created with ID ${testRunId} for plan ${planId} with ${planSpecificPoints.length} test points`);
                 } catch (error) {
                     CSReporter.error(`Failed to create test run for plan ${planId}: ${error}`);
                 }
@@ -278,7 +279,7 @@ export class CSADOPublisher {
 
             if (this.testRunsByPlan.size > 0) {
                 this.testRunStarted = true;
-                CSReporter.info(`Created ${this.testRunsByPlan.size} test run(s) for ${this.planTestPointsMap.size} plan(s)`);
+                // CSReporter.info(`Created ${this.testRunsByPlan.size} test run(s) for ${this.planTestPointsMap.size} plan(s)`);
             } else if (this.collectedTestPoints.size > 0) {
                 CSReporter.error('Cannot create test runs: Test points collected but no valid plan IDs');
             } else {
@@ -307,10 +308,10 @@ export class CSADOPublisher {
                 this.iterationResults.set(key, []);
             }
             this.iterationResults.get(key)!.push(result);
-            CSReporter.info(`DEBUG: Added iteration ${result.iteration} for ADO: ${key}`);
+            // CSReporter.info(`DEBUG: Added iteration ${result.iteration} for ADO: ${key}`);
         } else {
             this.scenarioResults.set(key, result);
-            CSReporter.info(`DEBUG: Added scenario result for ADO: ${key}`);
+            // CSReporter.info(`DEBUG: Added scenario result for ADO: ${key}`);
         }
     }
 
@@ -329,7 +330,7 @@ export class CSADOPublisher {
                 this.iterationResults.set(key, []);
             }
             this.iterationResults.get(key)!.push(result);
-            CSReporter.info(`DEBUG: Accumulated iteration ${result.iteration} for sequential execution: ${key}`);
+            // CSReporter.info(`DEBUG: Accumulated iteration ${result.iteration} for sequential execution: ${key}`);
 
             // Don't publish yet - wait for all iterations to complete
             // The final publish will happen when called with no iteration (or in afterAllTests)
@@ -361,7 +362,7 @@ export class CSADOPublisher {
             return;
         }
 
-        CSReporter.info(`Publishing aggregated results for ${iterations.length} iterations of: ${key}`);
+        // CSReporter.info(`Publishing aggregated results for ${iterations.length} iterations of: ${key}`);
 
         // Create aggregated result from iterations
         const aggregatedResult = this.aggregateIterations(scenario, feature, iterations);
@@ -416,13 +417,13 @@ export class CSADOPublisher {
         this.isPublishing = true;
 
         try {
-            CSReporter.info(`Publishing ${this.scenarioResults.size} test results to Azure DevOps...`);
+            // CSReporter.info(`Publishing ${this.scenarioResults.size} test results to Azure DevOps...`);
 
             for (const [key, result] of this.scenarioResults) {
                 await this.publishSingleResult(result);
             }
 
-            CSReporter.info('All test results published to Azure DevOps');
+            // CSReporter.info('All test results published to Azure DevOps');
         } catch (error) {
             CSReporter.error(`Failed to publish results to Azure DevOps: ${error}`);
         } finally {
@@ -472,11 +473,11 @@ export class CSADOPublisher {
 
         if (iterations.length > 0) {
             // For data-driven tests with iterations
-            CSReporter.info(`📊 Publishing ${iterations.length} iterations for data-driven scenario: ${result.scenario.name}`);
+            // CSReporter.info(`📊 Publishing ${iterations.length} iterations for data-driven scenario: ${result.scenario.name}`);
 
             // WORKAROUND: Since Azure DevOps doesn't properly support iterationDetails,
             // we aggregate all iterations into a single test result with detailed comments
-            CSReporter.info(`🔄 Using workaround: Aggregating ${iterations.length} iterations into single test result`);
+            // CSReporter.info(`🔄 Using workaround: Aggregating ${iterations.length} iterations into single test result`);
 
             // Determine overall outcome
             const hasFailure = iterations.some(iter => iter.status === 'failed');
@@ -530,7 +531,7 @@ export class CSADOPublisher {
                     comment: comment
                 };
 
-                CSReporter.info(`📝 Updating test result with aggregated data from ${iterations.length} iterations`);
+                // CSReporter.info(`📝 Updating test result with aggregated data from ${iterations.length} iterations`);
                 await this.client.updateTestResult(aggregatedResult, testRun.id);
             }
 
@@ -538,7 +539,7 @@ export class CSADOPublisher {
             finalOutcome = overallOutcome;
             totalDuration = iterations.reduce((sum, iter) => sum + iter.duration, 0);
 
-            CSReporter.info(`✅ Created ${iterations.length} separate test results for data-driven scenario`);
+            // CSReporter.info(`✅ Created ${iterations.length} separate test results for data-driven scenario`);
             return; // Exit early since we've handled iterations separately
         } else {
             // Single execution (non-data-driven)
@@ -554,7 +555,8 @@ export class CSADOPublisher {
                     outcome: finalOutcome as any,
                     errorMessage: aggregatedErrorMessage,
                     duration: totalDuration,
-                    stackTrace: result.stackTrace
+                    stackTrace: result.stackTrace,
+                    comment: result.comment  // Pass custom comment if provided
                 };
 
                 await this.client.updateTestResult(testResult, testRun.id);
@@ -639,7 +641,7 @@ export class CSADOPublisher {
         }
 
         if (attachments.length > 0) {
-            CSReporter.info(`Uploaded ${attachments.length} attachments for test results`);
+            // CSReporter.info(`Uploaded ${attachments.length} attachments for test results`);
         }
     }
 
@@ -773,13 +775,13 @@ export class CSADOPublisher {
                     if (testResultsPath) {
                         // Check if it's a zip file
                         if (testResultsPath.endsWith('.zip')) {
-                            CSReporter.info(`Attaching zipped test results to test run ${testRun.id} (Plan ${planId})`);
+                            // CSReporter.info(`Attaching zipped test results to test run ${testRun.id} (Plan ${planId})`);
                             await this.client.uploadTestRunAttachment(testRun.id, testResultsPath);
                         } else {
                             // If not a zip, check if we need to zip it
                             const zipPath = `${testResultsPath}.zip`;
                             if (fs.existsSync(zipPath)) {
-                                CSReporter.info(`Attaching zipped test results to test run ${testRun.id} (Plan ${planId})`);
+                                // CSReporter.info(`Attaching zipped test results to test run ${testRun.id} (Plan ${planId})`);
                                 await this.client.uploadTestRunAttachment(testRun.id, zipPath);
                             } else {
                                 CSReporter.debug(`No zipped results found at ${zipPath}`);
@@ -789,7 +791,7 @@ export class CSADOPublisher {
 
                     // Complete the test run
                     await this.client.completeTestRun(testRun.id);
-                    CSReporter.info(`ADO Test Run completed: ${testRun.name} (ID: ${testRun.id})`);
+                    // CSReporter.info(`ADO Test Run completed: ${testRun.name} (ID: ${testRun.id}`);
                 } catch (error) {
                     CSReporter.error(`Failed to complete test run ${testRun.id} for plan ${planId}: ${error}`);
                     // Continue with other test runs
@@ -809,7 +811,7 @@ export class CSADOPublisher {
                 try {
                     if (fs.existsSync(testResultsPath)) {
                         fs.unlinkSync(testResultsPath);
-                        CSReporter.info(`🗑️ Deleted zip file after ADO upload: ${testResultsPath}`);
+                        // CSReporter.info(`🗑️ Deleted zip file after ADO upload: ${testResultsPath}`);
                     }
                 } catch (deleteError) {
                     CSReporter.warn(`Failed to delete zip file: ${deleteError}`);
