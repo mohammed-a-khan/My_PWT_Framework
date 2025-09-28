@@ -998,10 +998,19 @@ export class CSBDDRunner {
                         iteration: iterationNumber,
                         iterationData: iterationData, // Use the clean filtered data for comments
                         name: scenarioResult.name,
-                        // Capture error information from scenarioResult - this is what was missing!
-                        error: scenarioResult.error || (scenarioResult.status === 'failed' ? 'Test failed' : undefined),
+                        // Use errorMessage field to match what CSADOPublisher expects
+                        errorMessage: scenarioResult.error || (scenarioResult.status === 'failed' ? 'Test failed' : undefined),
                         stackTrace: scenarioResult.stackTrace || scenarioResult.error  // Use error as stack if no separate stack
                     };
+
+                    // Debug logging to trace error message flow
+                    if (scenarioResult.status === 'failed') {
+                        CSReporter.debug(`[DEBUG] Sequential iteration ${iterationNumber} failed:`);
+                        CSReporter.debug(`  - scenarioResult.error: ${scenarioResult.error}`);
+                        CSReporter.debug(`  - scenarioResult.stackTrace: ${scenarioResult.stackTrace}`);
+                        CSReporter.debug(`  - result.errorMessage being passed to ADO: ${result.errorMessage}`);
+                        CSReporter.debug(`  - result.stackTrace being passed to ADO: ${result.stackTrace}`);
+                    }
 
                     dataDrivenResults.push(result);
                     iterationNumber++;
@@ -1634,10 +1643,10 @@ export class CSBDDRunner {
                     screenshot: matchingStep?.screenshot || step.screenshot
                 };
             }) : [],
-            // Extract error from the first failed step
+            // Extract error from the first failed step - error is already a string in CSReporter's step result
             error: lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined,
-            // Also extract stack trace if available
-            stackTrace: lastResult?.steps?.find(s => s.status === 'fail' && s.error)?.error || undefined
+            // For stack trace, use the same error message if no separate stack is available
+            stackTrace: lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined
         };
 
         // Get artifacts from browser manager
