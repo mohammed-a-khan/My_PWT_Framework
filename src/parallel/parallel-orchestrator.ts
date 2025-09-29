@@ -329,12 +329,16 @@ export class ParallelOrchestrator {
             // Optimize fork options for better performance
             // Only use ts-node for TypeScript files
             const isTypeScript = script.endsWith('.ts');
+
+            // Get worker heap size from config (default 1024MB)
+            const workerHeapSize = this.config.getNumber('WORKER_HEAP_SIZE', 1024);
+
             const execArgv = isTypeScript ? [
                 '-r', 'ts-node/register',
-                '--max-old-space-size=256', // Further reduce memory per worker
+                `--max-old-space-size=${workerHeapSize}`, // Configurable memory per worker
                 '--no-warnings' // Suppress warnings for cleaner output
             ] : [
-                '--max-old-space-size=256', // Further reduce memory per worker
+                `--max-old-space-size=${workerHeapSize}`, // Configurable memory per worker
                 '--no-warnings' // Suppress warnings for cleaner output
             ];
 

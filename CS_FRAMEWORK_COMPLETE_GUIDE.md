@@ -98,6 +98,9 @@ CACHE_COMPILED_TS=true
 PARALLEL_INITIALIZATION=true
 PRELOAD_COMMON_MODULES=false
 
+# Worker Memory Configuration
+WORKER_HEAP_SIZE=1024  # MB per worker process (increase if workers run out of memory)
+
 # Browser Launch Configuration with Examples
 
 # Browser Selection

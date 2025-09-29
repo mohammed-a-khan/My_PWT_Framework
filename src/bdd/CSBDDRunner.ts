@@ -1607,11 +1607,14 @@ export class CSBDDRunner {
         }
 
         // Build complete scenario data (same structure as sequential)
+        // Determine status first to use for error/stackTrace decision
+        const scenarioStatus = this.currentScenario?.status || (lastResult?.status === 'pass' ? 'passed' : 'failed');
+
         const scenarioData = {
             name: scenarioName,
             feature: feature.name,
             tags: [...feature.tags, ...scenario.tags],
-            status: this.currentScenario?.status || (lastResult?.status === 'pass' ? 'passed' : 'failed'),
+            status: scenarioStatus,
             duration: lastResult?.duration || 0,
             startTime: lastResult ? new Date(lastResult.timestamp) : new Date(),
             endTime: new Date(),
@@ -1650,10 +1653,14 @@ export class CSBDDRunner {
                     screenshot: matchingStep?.screenshot || step.screenshot
                 };
             }) : [],
-            // Extract error from the first failed step or from the exception caught
-            error: this.lastScenarioError?.message || lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined,
-            // Extract stack trace from the caught exception or use the error string if no exception
-            stackTrace: this.lastScenarioError?.stack || lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined
+            // Only extract error and stack trace if the scenario actually failed
+            error: scenarioStatus === 'failed' ?
+                (this.lastScenarioError?.message || lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined) :
+                undefined,
+            // Extract stack trace only for failed scenarios
+            stackTrace: scenarioStatus === 'failed' ?
+                (this.lastScenarioError?.stack || lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined) :
+                undefined
         };
 
         // Get artifacts from browser manager
