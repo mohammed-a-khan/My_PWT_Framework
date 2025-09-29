@@ -524,15 +524,24 @@ export class CSBrowserManager {
 
         if (this.context) {
             try {
-                // Use a timeout to prevent hanging on context.close()
+                // Increase timeout to allow HAR saving to complete (HAR can be large)
+                // HAR is automatically saved by Playwright when context closes
                 await Promise.race([
                     this.context.close(),
                     new Promise((_, reject) =>
-                        setTimeout(() => reject(new Error('Context close timeout')), 5000)
+                        setTimeout(() => reject(new Error('Context close timeout')), 15000)  // Increased from 5000ms to 15000ms
                     )
                 ]);
             } catch (error) {
-                CSReporter.debug('Context close timeout or error: ' + error);
+                CSReporter.warn('Context close timeout or error (HAR may not be saved): ' + error);
+                // Force close the context if it's still open
+                try {
+                    if (this.context) {
+                        await this.context.close();
+                    }
+                } catch (secondError) {
+                    CSReporter.debug('Force close also failed: ' + secondError);
+                }
             } finally {
                 this.context = null;
             }

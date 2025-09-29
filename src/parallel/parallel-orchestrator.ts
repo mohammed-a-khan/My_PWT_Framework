@@ -812,10 +812,11 @@ export class ParallelOrchestrator {
                     // Set up a timeout in case worker doesn't exit cleanly
                     const timeout = setTimeout(() => {
                         if (worker.process.connected) {
+                            CSReporter.warn(`Worker ${worker.id} did not exit gracefully, force killing...`);
                             worker.process.kill('SIGKILL'); // Force kill if needed
                         }
                         resolve();
-                    }, 3000); // Reduced timeout for faster cleanup
+                    }, 20000); // Increased to 20s to allow HAR saving (context close can take up to 15s)
 
                     // Listen for worker exit
                     worker.process.once('exit', () => {
