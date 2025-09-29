@@ -11,6 +11,7 @@ import { CSReporter } from '../reporter/CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSDataProvider } from '../data/CSDataProvider';
 import { CSADOIntegration } from '../ado/CSADOIntegration';
+import { CSTestResultsManager } from '../reporter/CSTestResultsManager';
 
 interface WorkItem {
     id: string;
@@ -28,6 +29,8 @@ interface Worker {
     process: ChildProcess;
     busy: boolean;
     currentWork?: WorkItem;
+    assignedAt?: number;
+    errorCount?: number;
 }
 
 export class ParallelOrchestrator {
@@ -35,14 +38,19 @@ export class ParallelOrchestrator {
     private workQueue: WorkItem[] = [];
     private results: Map<string, any> = new Map();
     private config = CSConfigurationManager.getInstance();
+    private resultsManager = CSTestResultsManager.getInstance();
     private completedCount = 0;
     private totalCount = 0;
     private maxWorkers: number;
     private adoIntegration: any;
     private dataDrivenResults: Map<string, any[]> = new Map(); // Group iterations by scenario base name
+    private performanceMetrics: Map<string, any> = new Map();
+    private workerPool: Worker[] = []; // Reusable worker pool
+    private reuseWorkers: boolean = true;
 
     constructor(maxWorkers?: number) {
         this.maxWorkers = maxWorkers || parseInt(process.env.PARALLEL_WORKERS || '0') || os.cpus().length;
+        this.reuseWorkers = this.config.getBoolean('REUSE_WORKERS', true);
     }
 
     /**
@@ -249,36 +257,104 @@ export class ParallelOrchestrator {
     }
 
     private async startWorkers(): Promise<void> {
-        const workerScript = path.join(__dirname, 'worker-process.ts');
+        // Use .js extension for compiled code, .ts for ts-node
+        const ext = __filename.endsWith('.ts') ? '.ts' : '.js';
+        const workerScript = path.join(__dirname, `worker-process${ext}`);
+        const workersNeeded = Math.min(this.maxWorkers, this.totalCount);
 
+        // Get the test results directory from the parent
+        const testResultsDir = this.resultsManager.getCurrentTestRunDir();
+
+        CSReporter.info(`[Perf] Starting ${workersNeeded} workers in parallel...`);
+        const startTime = Date.now();
+
+        // Create all workers in parallel for faster startup
         const promises = [];
-        for (let i = 1; i <= Math.min(this.maxWorkers, this.totalCount); i++) {
+        for (let i = 1; i <= workersNeeded; i++) {
             promises.push(this.createWorker(i, workerScript));
         }
 
         const workers = await Promise.all(promises);
+
+        CSReporter.info(`[Perf] All workers ready in ${Date.now() - startTime}ms`);
+
+        // Store workers and start assigning work
         workers.forEach(worker => {
             this.workers.set(worker.id, worker);
-            this.assignWork(worker);
+            this.workerPool.push(worker);
+            // Assign work immediately
+            setImmediate(() => this.assignWork(worker));
         });
     }
 
     private createWorker(id: number, script: string): Promise<Worker> {
         return new Promise((resolve, reject) => {
-            CSReporter.debug(`Creating worker ${id}`);
-
-            // Get project info from config to pass to worker for early initialization
             const project = this.config.get('PROJECT') || this.config.get('project') || 'common';
 
+            // Get decrypted ADO configuration values from main process
+            const adoConfig: Record<string, string> = {};
+            const adoKeys = [
+                'ADO_PAT', 'ADO_ORGANIZATION', 'ADO_PROJECT',
+                'ADO_BASE_URL', 'ADO_API_VERSION', 'ADO_PLAN_ID',
+                'ADO_SUITE_ID', 'ADO_TEST_PLAN_ID', 'ADO_TEST_SUITE_ID',
+                'ADO_ENABLED', 'ADO_DRY_RUN'
+            ];
+
+            // Get decrypted values from config manager
+            for (const key of adoKeys) {
+                const value = this.config.get(key);
+                if (value) {
+                    adoConfig[key] = value;
+                }
+            }
+
+            // Pass artifact-related configuration to workers
+            const artifactConfig: Record<string, string> = {};
+            const artifactKeys = [
+                'BROWSER_VIDEO', 'BROWSER_VIDEO_WIDTH', 'BROWSER_VIDEO_HEIGHT',
+                'HAR_CAPTURE_MODE', 'BROWSER_HAR_ENABLED', 'BROWSER_HAR_OMIT_CONTENT',
+                'TRACE_CAPTURE_MODE', 'BROWSER_TRACE_ENABLED',
+                'SCREENSHOT_CAPTURE_MODE', 'SCREENSHOT_ON_FAILURE',
+                'HEADLESS', 'BROWSER', 'TIMEOUT'
+            ];
+
+            // Get artifact configuration values from config manager
+            for (const key of artifactKeys) {
+                const value = this.config.get(key);
+                if (value !== undefined && value !== null) {
+                    artifactConfig[key] = String(value);
+                }
+            }
+
+            // Optimize fork options for better performance
+            // Only use ts-node for TypeScript files
+            const isTypeScript = script.endsWith('.ts');
+            const execArgv = isTypeScript ? [
+                '-r', 'ts-node/register',
+                '--max-old-space-size=256', // Further reduce memory per worker
+                '--no-warnings' // Suppress warnings for cleaner output
+            ] : [
+                '--max-old-space-size=256', // Further reduce memory per worker
+                '--no-warnings' // Suppress warnings for cleaner output
+            ];
+
             const workerProcess = fork(script, [], {
-                execArgv: ['-r', 'ts-node/register'],
+                execArgv,
                 env: {
-                    ...process.env,  // This includes all environment variables including ADO_*
+                    ...process.env,  // Base environment variables
+                    ...adoConfig,    // Override with decrypted ADO values
+                    ...artifactConfig, // Pass artifact configuration
                     WORKER_ID: String(id),
                     TS_NODE_TRANSPILE_ONLY: 'true',
-                    PROJECT: project  // Pass project for early step loading
+                    TS_NODE_FILES: 'false', // Don't type check
+                    TS_NODE_CACHE: 'true', // Enable caching
+                    NODE_ENV: 'production', // Optimize for production
+                    PROJECT: project,  // Pass project for early step loading
+                    LAZY_LOAD: 'true', // Enable lazy loading in worker
+                    TEST_RESULTS_DIR: this.resultsManager.getCurrentTestRunDir() // Pass parent test results directory
                 },
-                silent: false
+                silent: false,
+                serialization: 'advanced' // Use V8 serialization for better IPC performance
             });
 
             const worker: Worker = {
@@ -307,16 +383,15 @@ export class ParallelOrchestrator {
             const onReady = (message: any) => {
                 if (message.type === 'ready') {
                     workerProcess.removeListener('message', onReady);
-                    CSReporter.debug(`Worker ${id} ready`);
                     resolve(worker);
                 }
             };
             workerProcess.on('message', onReady);
 
-            // Timeout if worker doesn't respond - increased to 30s for slower systems
+            // Reduced timeout since workers now start faster
             setTimeout(() => {
                 reject(new Error(`Worker ${id} failed to start`));
-            }, 30000);
+            }, 10000);
         });
     }
 
@@ -327,11 +402,59 @@ export class ParallelOrchestrator {
                 break;
             case 'error':
                 CSReporter.error(`Worker ${worker.id} error: ${message.error}`);
+                this.handleWorkerError(worker, message);
                 break;
             case 'log':
-                CSReporter.debug(`[Worker ${worker.id}] ${message.message}`);
+                if (this.config.getBoolean('DEBUG_WORKERS', false)) {
+                    CSReporter.debug(`[Worker ${worker.id}] ${message.message}`);
+                }
+                break;
+            case 'metrics':
+                this.performanceMetrics.set(`worker-${worker.id}`, message.metrics);
                 break;
         }
+    }
+
+    private handleWorkerError(worker: Worker, error: any) {
+        // Track error for worker health monitoring
+        if (!worker.errorCount) {
+            worker.errorCount = 0;
+        }
+        worker.errorCount++;
+
+        // If worker has too many errors, consider recycling it
+        if (worker.errorCount > 5 && this.reuseWorkers) {
+            CSReporter.warn(`Worker ${worker.id} has ${worker.errorCount} errors, recycling...`);
+            this.recycleWorker(worker);
+        }
+    }
+
+    private async recycleWorker(worker: Worker) {
+        // Remove from pool
+        this.workers.delete(worker.id);
+        const poolIndex = this.workerPool.indexOf(worker);
+        if (poolIndex > -1) {
+            this.workerPool.splice(poolIndex, 1);
+        }
+
+        // Kill the problematic worker
+        try {
+            worker.process.kill();
+        } catch (e) {
+            // Ignore
+        }
+
+        // Create replacement worker with correct extension
+        const ext = __filename.endsWith('.ts') ? '.ts' : '.js';
+        const newWorker = await this.createWorker(worker.id, path.join(__dirname, `worker-process${ext}`));
+        this.workers.set(newWorker.id, newWorker);
+        this.workerPool.push(newWorker);
+
+        // Assign pending work if any
+        if (worker.currentWork) {
+            this.workQueue.unshift(worker.currentWork); // Re-queue the work
+        }
+        this.assignWork(newWorker);
     }
 
     private async handleResult(worker: Worker, result: any) {
@@ -558,52 +681,124 @@ export class ParallelOrchestrator {
         const work = this.workQueue.shift()!;
         worker.busy = true;
         worker.currentWork = work;
+        worker.assignedAt = Date.now(); // Track assignment time for timeout detection
 
-        const config = Object.fromEntries(this.config.getAll());
+        // Only send necessary config, not everything
+        const essentialConfig = this.getEssentialConfig();
 
         worker.process.send({
             type: 'execute',
             scenarioId: work.id,
             feature: work.feature,
             scenario: work.scenario,
-            config,
+            config: essentialConfig,
             exampleRow: work.exampleRow,
             exampleHeaders: work.exampleHeaders,
             iterationNumber: work.iterationNumber,
-            totalIterations: work.totalIterations
+            totalIterations: work.totalIterations,
+            testResultsDir: this.resultsManager.getCurrentTestRunDir() // Pass test results directory
         });
 
-        CSReporter.debug(`Worker ${worker.id} assigned: ${work.scenario.name}`);
+        if (this.config.getBoolean('DEBUG_WORKERS', false)) {
+            CSReporter.debug(`Worker ${worker.id} assigned: ${work.scenario.name}`);
+        }
+    }
+
+    private getEssentialConfig(): Record<string, any> {
+        // Only send config that workers actually need
+        const essentialKeys = [
+            'PROJECT', 'project',
+            'HEADLESS', 'BROWSER',
+            'BASE_URL', 'TIMEOUT',
+            'BROWSER_REUSE_ENABLED', 'BROWSER_REUSE_CLEAR_STATE',
+            'BROWSER_REUSE_CLOSE_AFTER_SCENARIOS',
+            'ADO_ENABLED', 'ADO_DRY_RUN', 'ADO_ORGANIZATION', 'ADO_PROJECT',
+            'ADO_PAT', 'ADO_BASE_URL', 'ADO_API_VERSION',  // Include ADO PAT and other ADO config
+            'ADO_TEST_PLAN_ID', 'ADO_TEST_SUITE_ID',
+            'ADO_INTEGRATION_ENABLED',
+            'CAPTURE_SCREENSHOTS', 'CAPTURE_VIDEOS',
+            'HAR_ENABLED', 'TRACE_ENABLED'
+        ];
+
+        const config: Record<string, any> = {};
+        for (const key of essentialKeys) {
+            const value = this.config.get(key);
+            if (value !== undefined) {
+                config[key] = value;
+            }
+        }
+        return config;
     }
 
     private waitForCompletion(): Promise<void> {
         return new Promise((resolve) => {
+            const startTime = Date.now();
             const checkInterval = setInterval(() => {
                 if (this.completedCount >= this.totalCount) {
                     clearInterval(checkInterval);
+                    const totalTime = Date.now() - startTime;
+                    CSReporter.info(`[Perf] All tests completed in ${totalTime}ms`);
+                    this.printPerformanceReport();
                     resolve();
                 }
 
-                // Check for stuck workers
+                // Check for stuck workers with better timeout detection
+                const now = Date.now();
                 for (const worker of this.workers.values()) {
                     if (!worker.process.connected && worker.busy) {
                         CSReporter.warn(`Worker ${worker.id} disconnected while busy`);
                         worker.busy = false;
                         this.completedCount++;
+                        // Re-queue the work
+                        if (worker.currentWork) {
+                            this.workQueue.push(worker.currentWork);
+                            this.assignWorkToIdleWorker();
+                        }
+                    } else if (worker.busy && worker.assignedAt) {
+                        // Check for timeout (2 minutes per scenario)
+                        const elapsed = now - worker.assignedAt;
+                        if (elapsed > 120000) {
+                            CSReporter.warn(`Worker ${worker.id} timeout on: ${worker.currentWork?.scenario.name}`);
+                            // Recycle the worker
+                            this.recycleWorker(worker);
+                        }
                     }
                 }
             }, 100);
 
-            // Timeout after 5 minutes
+            // Timeout after 10 minutes (increased for large test suites)
             setTimeout(() => {
                 clearInterval(checkInterval);
                 CSReporter.warn('Parallel execution timed out');
+                this.printPerformanceReport();
                 resolve();
-            }, 300000);
+            }, 600000);
         });
     }
 
+    private assignWorkToIdleWorker() {
+        // Find an idle worker and assign work
+        for (const worker of this.workers.values()) {
+            if (!worker.busy) {
+                this.assignWork(worker);
+                break;
+            }
+        }
+    }
+
+    private printPerformanceReport() {
+        if (this.performanceMetrics.size > 0) {
+            CSReporter.info('=== Performance Report ===');
+            for (const [key, metrics] of this.performanceMetrics) {
+                CSReporter.info(`${key}: ${JSON.stringify(metrics)}`);
+            }
+        }
+    }
+
     private async cleanup() {
+        CSReporter.info('[Perf] Cleaning up workers...');
+        const cleanupStart = Date.now();
+
         // Send terminate message to all workers
         const terminationPromises: Promise<void>[] = [];
 
@@ -613,10 +808,10 @@ export class ParallelOrchestrator {
                     // Set up a timeout in case worker doesn't exit cleanly
                     const timeout = setTimeout(() => {
                         if (worker.process.connected) {
-                            worker.process.kill();
+                            worker.process.kill('SIGKILL'); // Force kill if needed
                         }
                         resolve();
-                    }, 5000); // Give workers 5 seconds to cleanup and save HAR files
+                    }, 3000); // Reduced timeout for faster cleanup
 
                     // Listen for worker exit
                     worker.process.once('exit', () => {
@@ -625,7 +820,11 @@ export class ParallelOrchestrator {
                     });
 
                     // Send terminate message
-                    worker.process.send({ type: 'terminate' });
+                    if (worker.process.connected) {
+                        worker.process.send({ type: 'terminate' });
+                    } else {
+                        resolve();
+                    }
                 });
 
                 terminationPromises.push(terminationPromise);
@@ -637,5 +836,8 @@ export class ParallelOrchestrator {
         // Wait for all workers to terminate
         await Promise.all(terminationPromises);
         this.workers.clear();
+        this.workerPool = [];
+
+        CSReporter.info(`[Perf] Cleanup completed in ${Date.now() - cleanupStart}ms`);
     }
 }

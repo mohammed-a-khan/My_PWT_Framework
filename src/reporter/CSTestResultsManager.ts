@@ -43,14 +43,22 @@ export class CSTestResultsManager {
      * Initialize test results directory for current test run
      */
     public initializeTestRun(project?: string): string {
+        // Check if we're a worker and should use parent's test results directory
+        const existingTestResultsDir = this.config.get('TEST_RESULTS_DIR') || process.env.TEST_RESULTS_DIR;
+        if (existingTestResultsDir && process.env.IS_WORKER === 'true') {
+            this.currentTestRunDir = existingTestResultsDir;
+            CSReporter.debug(`[Worker ${process.env.WORKER_ID}] Using parent test results directory: ${this.currentTestRunDir}`);
+            return this.currentTestRunDir;
+        }
+
         const baseDir = this.config.get('REPORTS_BASE_DIR', './reports');
         const createTimestampFolder = this.config.getBoolean('REPORTS_CREATE_TIMESTAMP_FOLDER', true);
-        
+
         // Ensure base directory exists
         if (!fs.existsSync(baseDir)) {
             fs.mkdirSync(baseDir, { recursive: true });
         }
-        
+
         // Create timestamp folder
         if (createTimestampFolder) {
             this.timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, -5);
@@ -58,7 +66,7 @@ export class CSTestResultsManager {
         } else {
             this.currentTestRunDir = baseDir;
         }
-        
+
         // Create directory structure
         this.createDirectoryStructure();
 

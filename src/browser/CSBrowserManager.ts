@@ -33,6 +33,12 @@ export class CSBrowserManager {
     private videosToDelete: string[] = [];
     private harsToDelete: string[] = [];
     private currentHarPath: string | null = null;
+    private sessionArtifacts: { videos: string[], traces: string[], har: string[], screenshots: string[] } = {
+        videos: [],
+        traces: [],
+        har: [],
+        screenshots: []
+    };
     private traceStarted: boolean = false;
 
     private constructor() {
@@ -255,6 +261,16 @@ export class CSBrowserManager {
         // This ensures artifacts are saved in the correct location
         const resultsManager = CSTestResultsManager.getInstance();
         dirs = resultsManager.getDirectories();
+
+        // Debug log artifact configuration
+        console.log(`[BrowserManager] Artifact configuration:`, {
+            videoMode,
+            harCaptureMode: this.config.get('HAR_CAPTURE_MODE', 'never'),
+            traceCaptureMode: this.config.get('TRACE_CAPTURE_MODE', 'never'),
+            harEnabled: this.config.getBoolean('BROWSER_HAR_ENABLED', false),
+            traceEnabled: this.config.getBoolean('BROWSER_TRACE_ENABLED', false),
+            workerId: this.workerId || 'main'
+        });
 
         CSReporter.debug(`Video mode configured: ${videoMode} (Worker: ${this.workerId || 'main'})`);
         if (videoMode !== 'off' && videoMode !== 'never') {
@@ -643,6 +659,14 @@ export class CSBrowserManager {
         let videoPath: string | null = null;
         let tracePath: string | null = null;
 
+        // Track artifacts for this session
+        this.sessionArtifacts = {
+            videos: [],
+            traces: [],
+            har: [],
+            screenshots: []
+        };
+
         // Handle trace recording
         const traceCaptureMode = this.config.get('TRACE_CAPTURE_MODE', 'never').toLowerCase();
         if (this.context && (this.traceStarted || this.config.getBoolean('BROWSER_TRACE_ENABLED', false))) {
@@ -666,6 +690,7 @@ export class CSBrowserManager {
                     }
                 } else {
                     CSReporter.info(`Trace saved (capture mode: ${traceCaptureMode}, test ${testStatus}): ${tracePath}`);
+                    this.sessionArtifacts.traces.push(tracePath);
                 }
             } catch (error) {
                 CSReporter.debug('Failed to save trace');
@@ -689,6 +714,7 @@ export class CSBrowserManager {
                             CSReporter.debug(`Video will be deleted (capture mode: ${videoCaptureMode}, test ${testStatus}): ${videoPath}`);
                         } else {
                             CSReporter.info(`Video saved (capture mode: ${videoCaptureMode}, test ${testStatus}): ${videoPath}`);
+                            this.sessionArtifacts.videos.push(videoPath);
                         }
                     } else {
                         CSReporter.debug('Video path is null - video may not have been saved yet');
@@ -722,6 +748,7 @@ export class CSBrowserManager {
                     CSReporter.debug(`HAR will be deleted (capture mode: ${harCaptureMode}, test ${testStatus}): ${this.currentHarPath}`);
                 } else {
                     CSReporter.info(`HAR saved (capture mode: ${harCaptureMode}, test ${testStatus}): ${this.currentHarPath}`);
+                    this.sessionArtifacts.har.push(this.currentHarPath);
                 }
             }
         }
@@ -916,35 +943,23 @@ export class CSBrowserManager {
      * Get session artifacts (screenshots, videos, etc.)
      */
     public async getSessionArtifacts(): Promise<{ screenshots: string[], videos: string[], traces: string[], har: string[] }> {
-        const artifacts: { screenshots: string[], videos: string[], traces: string[], har: string[] } = {
-            screenshots: [],
-            videos: [],
-            traces: [],
-            har: []
+        // Return the artifacts collected during this session
+        // This includes files that were saved during close() operations
+        const artifacts = {
+            screenshots: [...this.sessionArtifacts.screenshots],
+            videos: [...this.sessionArtifacts.videos],
+            traces: [...this.sessionArtifacts.traces],
+            har: [...this.sessionArtifacts.har]
         };
 
+        // Also try to get current video path if still recording
         try {
-            const config = CSConfigurationManager.getInstance();
-            const fs = require('fs');
-            const isParallel = this.isWorkerThread;
-            const testResultsDir = config.get('TEST_RESULTS_DIR') || path.join(process.cwd(), 'reports', 'test-results');
-
-            // Build directory paths - always use main test results directory
-            // Don't create worker-specific subdirectories
-            const dirs = {
-                videos: path.join(testResultsDir, 'videos'),
-                har: path.join(testResultsDir, 'har'),
-                traces: path.join(testResultsDir, 'traces'),
-                screenshots: path.join(testResultsDir, 'screenshots')
-            };
-
-            // Get video path if recording
             if (this.page && this.context) {
                 const video = this.page.video();
                 if (video) {
                     try {
                         const videoPath = await video.path();
-                        if (videoPath) {
+                        if (videoPath && !artifacts.videos.includes(videoPath)) {
                             artifacts.videos.push(videoPath);
                         }
                     } catch (e) {
@@ -952,33 +967,8 @@ export class CSBrowserManager {
                     }
                 }
             }
-
-            // Check for trace files
-            if (fs.existsSync(dirs.traces)) {
-                const traceFiles = fs.readdirSync(dirs.traces)
-                    .filter((f: string) => f.endsWith('.zip'))
-                    .map((f: string) => path.join(dirs.traces, f));
-                artifacts.traces.push(...traceFiles);
-            }
-
-            // Check for HAR files
-            if (fs.existsSync(dirs.har)) {
-                const harFiles = fs.readdirSync(dirs.har)
-                    .filter((f: string) => f.endsWith('.har'))
-                    .map((f: string) => path.join(dirs.har, f));
-                artifacts.har.push(...harFiles);
-            }
-
-            // Check for screenshots
-            if (fs.existsSync(dirs.screenshots)) {
-                const screenshotFiles = fs.readdirSync(dirs.screenshots)
-                    .filter((f: string) => f.endsWith('.png') || f.endsWith('.jpg'))
-                    .map((f: string) => path.join(dirs.screenshots, f));
-                artifacts.screenshots.push(...screenshotFiles);
-            }
-
         } catch (error: any) {
-            CSReporter.debug(`Error collecting session artifacts: ${error.message}`);
+            CSReporter.debug(`Error getting current video path: ${error.message}`);
         }
 
         return artifacts;

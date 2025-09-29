@@ -197,9 +197,20 @@ export class CSBDDRunner {
             }
             
             CSReporter.info(`Found ${features.length} features to execute`);
-            
-            // Load required step definitions
-            await this.bddEngine.loadRequiredStepDefinitions(features);
+
+            // Only load step definitions for sequential execution
+            // For parallel execution, workers will load their own steps
+            const parallelValue = typeof options.parallel === 'number' ? options.parallel :
+                                  options.parallel === true ? 2 :
+                                  this.config.getNumber('PARALLEL', 1);
+            const shouldLoadSteps = parallelValue <= 1;
+
+            if (shouldLoadSteps) {
+                // Load required step definitions for sequential execution
+                await this.bddEngine.loadRequiredStepDefinitions(features);
+            } else {
+                CSReporter.debug('Skipping step loading in main process for parallel execution');
+            }
 
             // Check if validation is enabled
             const validationLevel = this.config.get('VALIDATION_LEVEL', 'strict').toLowerCase();
@@ -226,9 +237,9 @@ export class CSBDDRunner {
 
                         if (validationResult.duplicateSteps.size > 0 && validateSteps) {
                             CSReporter.error(`\n❌ Found ${validationResult.duplicateSteps.size} duplicate step definition(s):`);
-                            validationResult.duplicateSteps.forEach((locations, pattern) => {
+                            validationResult.duplicateSteps.forEach((locations: any, pattern: any) => {
                                 CSReporter.error(`\n  Step: "${pattern}"`);
-                                locations.forEach(loc => {
+                                locations.forEach((loc: any) => {
                                     CSReporter.error(`    - ${loc.file}:${loc.line}`);
                                 });
                             });
@@ -236,9 +247,9 @@ export class CSBDDRunner {
 
                         if (validationResult.duplicateMethods.size > 0 && validateMethods) {
                             CSReporter.error(`\n❌ Found ${validationResult.duplicateMethods.size} duplicate method(s) across files:`);
-                            validationResult.duplicateMethods.forEach((locations, methodName) => {
+                            validationResult.duplicateMethods.forEach((locations: any, methodName: any) => {
                                 CSReporter.error(`\n  Method: "${methodName}"`);
-                                locations.forEach(loc => {
+                                locations.forEach((loc: any) => {
                                     CSReporter.error(`    - ${loc.file}:${loc.line}`);
                                 });
                             });
@@ -998,19 +1009,10 @@ export class CSBDDRunner {
                         iteration: iterationNumber,
                         iterationData: iterationData, // Use the clean filtered data for comments
                         name: scenarioResult.name,
-                        // Use errorMessage field to match what CSADOPublisher expects
-                        errorMessage: scenarioResult.error || (scenarioResult.status === 'failed' ? 'Test failed' : undefined),
+                        // Capture error information from scenarioResult - this is what was missing!
+                        error: scenarioResult.error || (scenarioResult.status === 'failed' ? 'Test failed' : undefined),
                         stackTrace: scenarioResult.stackTrace || scenarioResult.error  // Use error as stack if no separate stack
                     };
-
-                    // Debug logging to trace error message flow
-                    if (scenarioResult.status === 'failed') {
-                        CSReporter.debug(`[DEBUG] Sequential iteration ${iterationNumber} failed:`);
-                        CSReporter.debug(`  - scenarioResult.error: ${scenarioResult.error}`);
-                        CSReporter.debug(`  - scenarioResult.stackTrace: ${scenarioResult.stackTrace}`);
-                        CSReporter.debug(`  - result.errorMessage being passed to ADO: ${result.errorMessage}`);
-                        CSReporter.debug(`  - result.stackTrace being passed to ADO: ${result.stackTrace}`);
-                    }
 
                     dataDrivenResults.push(result);
                     iterationNumber++;
@@ -1643,10 +1645,10 @@ export class CSBDDRunner {
                     screenshot: matchingStep?.screenshot || step.screenshot
                 };
             }) : [],
-            // Extract error from the first failed step - error is already a string in CSReporter's step result
+            // Extract error from the first failed step
             error: lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined,
-            // For stack trace, use the same error message if no separate stack is available
-            stackTrace: lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined
+            // Also extract stack trace if available
+            stackTrace: lastResult?.steps?.find(s => s.status === 'fail' && s.error)?.error || undefined
         };
 
         // Get artifacts from browser manager

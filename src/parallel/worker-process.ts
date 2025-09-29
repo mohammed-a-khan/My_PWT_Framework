@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 /**
- * Worker process for parallel test execution
- * Thin wrapper that uses the existing BDD runner for scenario execution
+ * Optimized Worker Process for Parallel Test Execution
+ * Performance optimizations:
+ * - Module preloading and caching
+ * - Lazy initialization
+ * - Reduced require() calls
+ * - Configuration caching
  */
 
 import * as path from 'path';
@@ -17,6 +21,7 @@ interface ExecuteMessage {
     exampleHeaders?: string[];
     iterationNumber?: number;
     totalIterations?: number;
+    testResultsDir?: string; // Parent test results directory
 }
 
 interface ResultMessage {
@@ -42,6 +47,9 @@ interface ResultMessage {
     adoMetadata?: any;  // ADO metadata for test case mapping
 }
 
+// Module cache for performance
+const moduleCache: Map<string, any> = new Map();
+
 class WorkerProcess {
     private workerId: number;
     private bddRunner: any;
@@ -49,50 +57,91 @@ class WorkerProcess {
     private scenarioCountForReuse: number = 0;
     private anyTestFailed: boolean = false;  // Track if any test failed for HAR decision
     private adoIntegration: any;
+    private configManager: any;
+    private isInitialized: boolean = false;
+    private stepDefinitionsLoaded: Map<string, boolean> = new Map();
+    private performanceMetrics: Map<string, number> = new Map();
 
     constructor() {
         this.workerId = parseInt(process.env.WORKER_ID || '0');
         process.env.IS_WORKER = 'true';
         process.env.WORKER_ID = String(this.workerId);
 
+        // Enable performance optimizations
+        process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+        process.env.TS_NODE_TRANSPILE_ONLY = 'true';
+        process.env.TS_NODE_FILES = 'false';
 
         this.setupProcessHandlers();
 
-        // Initialize worker asynchronously
-        this.initializeWorker();
+        // Send ready immediately
+        this.sendReady();
+
+        // Preload critical modules in background for faster first scenario
+        setImmediate(() => this.preloadModules());
     }
 
-    private async initializeWorker() {
+    private sendReady() {
+        // Send ready immediately without waiting for module loading
+        setImmediate(() => {
+            this.sendMessage({ type: 'ready', workerId: this.workerId });
+        });
+    }
+
+    private async preloadModules() {
+        // Preload critical modules in background
         try {
-            // Preload critical modules
-            const { CSBDDRunner } = require('../bdd/CSBDDRunner');
-            const { CSConfigurationManager } = require('../core/CSConfigurationManager');
-            const { CSBrowserManager } = require('../browser/CSBrowserManager');
+            const modules = [
+                '../bdd/CSBDDRunner',
+                '../core/CSConfigurationManager',
+                '../browser/CSBrowserManager'
+            ];
 
-            // Initialize BDD runner
+            for (const module of modules) {
+                this.getModule(module);
+            }
+
+            // Don't initialize singletons here as they may block
+            // They'll be initialized when needed
+        } catch (e) {
+            // Ignore preload errors
+        }
+    }
+
+    private getModule(moduleName: string): any {
+        if (!moduleCache.has(moduleName)) {
+            const startTime = Date.now();
+            moduleCache.set(moduleName, require(moduleName));
+            this.performanceMetrics.set(moduleName, Date.now() - startTime);
+        }
+        return moduleCache.get(moduleName);
+    }
+
+    private async lazyInitialize() {
+        if (this.isInitialized) return;
+
+        const startTime = Date.now();
+
+        try {
+            // Lazy load modules only when needed
+            const { CSBDDRunner } = this.getModule('../bdd/CSBDDRunner');
+            const { CSConfigurationManager } = this.getModule('../core/CSConfigurationManager');
+            const { CSBrowserManager } = this.getModule('../browser/CSBrowserManager');
+
             this.bddRunner = CSBDDRunner.getInstance();
-
-            // Skip preloading step definitions in workers
-            // Steps will be loaded during actual scenario execution in executeSingleScenarioForWorker
-            // This avoids the "No step definitions found" warning and improves startup performance
-
-            // Initialize browser manager (but don't launch browser yet)
+            this.configManager = CSConfigurationManager.getInstance();
             this.browserManager = CSBrowserManager.getInstance();
 
-            // Defer ADO integration initialization until after config is set up
-            // We'll initialize it when we actually execute scenarios
+            this.isInitialized = true;
 
+            this.sendMessage({
+                type: 'log',
+                message: `Initialized in ${Date.now() - startTime}ms`
+            });
         } catch (error) {
             console.error(`[Worker ${this.workerId}] Failed to initialize:`, error);
+            throw error;
         }
-
-        // Send ready message after initialization using setImmediate to ensure process is ready
-        setImmediate(() => {
-            // Wait a bit to ensure the parent process is ready to receive messages
-            setTimeout(() => {
-                this.sendMessage({ type: 'ready', workerId: this.workerId });
-            }, 100);
-        });
     }
 
     private setupProcessHandlers() {
@@ -135,22 +184,28 @@ class WorkerProcess {
             }
         };
 
+        let scenarioResult: any = null;  // Declare here so it's accessible in finally block
+
         try {
-            // Load configuration
-            process.env.PROJECT = message.config.project || message.config.PROJECT;
+            // Lazy initialize if not done
+            await this.lazyInitialize();
 
-            // Use already loaded modules (from preloadModules)
-            const { CSBDDRunner } = require('../bdd/CSBDDRunner');
-            const { CSConfigurationManager } = require('../core/CSConfigurationManager');
-            const { CSBrowserManager } = require('../browser/CSBrowserManager');
-            const { CSADOIntegration } = require('../ado/CSADOIntegration');
-            const { CSADOTagExtractor } = require('../ado/CSADOTagExtractor');
+            // Set project only if changed
+            const newProject = message.config.project || message.config.PROJECT;
+            if (process.env.PROJECT !== newProject) {
+                process.env.PROJECT = newProject;
+            }
 
-            // Set up configuration
-            const configManager = CSConfigurationManager.getInstance();
+            // Optimize configuration - only update if different
+            if (!this.configManager) {
+                const { CSConfigurationManager } = this.getModule('../core/CSConfigurationManager');
+                this.configManager = CSConfigurationManager.getInstance();
+            }
 
-            // First manually set ADO configuration from environment variables
-            // This ensures ADO works in worker processes
+            // Batch config updates for performance
+            const configUpdates: Map<string, any> = new Map();
+
+            // ADO configuration from environment
             const adoKeys = [
                 'ADO_ENABLED', 'ADO_DRY_RUN', 'ADO_ORGANIZATION', 'ADO_PROJECT',
                 'ADO_PAT', 'ADO_BASE_URL', 'ADO_API_VERSION', 'ADO_PLAN_ID',
@@ -159,49 +214,83 @@ class WorkerProcess {
 
             for (const key of adoKeys) {
                 const value = process.env[key];
-                if (value !== undefined) {
-                    configManager.set(key, value);
+                if (value !== undefined && this.configManager.get(key) !== value) {
+                    configUpdates.set(key, value);
                 }
             }
 
-            // Map ADO_ENABLED to ADO_INTEGRATION_ENABLED (which is what the code uses)
-            if (process.env.ADO_ENABLED) {
-                configManager.set('ADO_INTEGRATION_ENABLED', process.env.ADO_ENABLED);
+            // Artifact configuration from environment
+            const artifactKeys = [
+                'BROWSER_VIDEO', 'BROWSER_VIDEO_WIDTH', 'BROWSER_VIDEO_HEIGHT',
+                'HAR_CAPTURE_MODE', 'BROWSER_HAR_ENABLED', 'BROWSER_HAR_OMIT_CONTENT',
+                'TRACE_CAPTURE_MODE', 'BROWSER_TRACE_ENABLED',
+                'SCREENSHOT_CAPTURE_MODE', 'SCREENSHOT_ON_FAILURE',
+                'HEADLESS', 'BROWSER', 'TIMEOUT'
+            ];
+
+            for (const key of artifactKeys) {
+                const value = process.env[key];
+                if (value !== undefined && this.configManager.get(key) !== value) {
+                    configUpdates.set(key, value);
+                }
             }
 
-            // Then set config from message
+            // Map ADO_ENABLED to ADO_INTEGRATION_ENABLED
+            if (process.env.ADO_ENABLED && this.configManager.get('ADO_INTEGRATION_ENABLED') !== process.env.ADO_ENABLED) {
+                configUpdates.set('ADO_INTEGRATION_ENABLED', process.env.ADO_ENABLED);
+            }
+
+            // Message config
             for (const [key, value] of Object.entries(message.config)) {
-                configManager.set(key, value);
-            }
-
-            // Now initialize ADO integration after config is set
-            // Initialize ADO integration if enabled
-            if (configManager.get('ADO_ENABLED') === 'true' || configManager.get('ADO_INTEGRATION_ENABLED') === 'true') {
-                if (!this.adoIntegration) {
-                    this.adoIntegration = CSADOIntegration.getInstance();
-                    await this.adoIntegration.initialize(true); // true for worker mode
+                if (this.configManager.get(key) !== value) {
+                    configUpdates.set(key, value);
                 }
             }
 
-            // Create runner and browser manager if not already created
-            if (!this.bddRunner) {
-                this.bddRunner = CSBDDRunner.getInstance();
+            // Apply all config updates at once
+            for (const [key, value] of configUpdates) {
+                this.configManager.set(key, value);
             }
 
-            // Load step definitions for the project if not already loaded
-            // This should be fast if already loaded in initializeWorker
-            await this.bddRunner.loadProjectSteps(message.config.project || message.config.PROJECT);
+            // Set test results directory from parent if provided
+            if (message.testResultsDir) {
+                process.env.TEST_RESULTS_DIR = message.testResultsDir;
+                this.configManager.set('TEST_RESULTS_DIR', message.testResultsDir);
+            } else if (process.env.TEST_RESULTS_DIR) {
+                this.configManager.set('TEST_RESULTS_DIR', process.env.TEST_RESULTS_DIR);
+            }
 
-            // Initialize browser manager if needed
-            if (!this.browserManager) {
-                this.browserManager = CSBrowserManager.getInstance();
-                // Browser will be initialized on first use by the BDD runner
+            // Initialize ADO only once if enabled
+            const adoEnabled = this.configManager.get('ADO_ENABLED') === 'true' ||
+                             this.configManager.get('ADO_INTEGRATION_ENABLED') === 'true';
+
+            if (adoEnabled && !this.adoIntegration) {
+                const { CSADOIntegration } = this.getModule('../ado/CSADOIntegration');
+                this.adoIntegration = CSADOIntegration.getInstance();
+                await this.adoIntegration.initialize(true); // true for worker mode
+            }
+
+            // Load step definitions only if not loaded for this project
+            const projectKey = message.config.project || message.config.PROJECT || 'orangehrm';
+            if (!this.stepDefinitionsLoaded.get(projectKey)) {
+                const stepLoadStart = Date.now();
+
+                // Set STEP_DEFINITIONS_PATH for the project
+                const stepPath = `test/${projectKey}/steps;test/${projectKey}/step-definitions`;
+                this.configManager.set('STEP_DEFINITIONS_PATH', stepPath);
+
+                // Now load the steps with the correct path
+                await this.bddRunner.loadProjectSteps(projectKey);
+                this.stepDefinitionsLoaded.set(projectKey, true);
+                this.performanceMetrics.set(`steps-${projectKey}`, Date.now() - stepLoadStart);
+
+                // Removed verbose logging for step loading
             }
 
             // Execute the scenario using the existing framework method
             // This will handle browser, context, steps, everything
             // Pass data-driven test parameters if provided
-            const scenarioResult = await this.bddRunner.executeSingleScenarioForWorker(
+            scenarioResult = await this.bddRunner.executeSingleScenarioForWorker(
                 message.scenario,
                 message.feature,
                 { failFast: false },
@@ -215,7 +304,7 @@ class WorkerProcess {
             result.name = scenarioResult.name;  // Pass the interpolated scenario name
             result.status = scenarioResult.status;
             result.steps = scenarioResult.steps;
-            result.artifacts = scenarioResult.artifacts || { screenshots: [], videos: [] };
+            // Don't use artifacts from scenarioResult yet - will collect after browser handling
             result.tags = scenarioResult.tags || [];  // Pass tags back
             result.startTime = scenarioResult.startTime;
             result.endTime = scenarioResult.endTime;
@@ -232,17 +321,20 @@ class WorkerProcess {
                 this.anyTestFailed = true;
             }
 
-            // Capture any console logs
-            const { CSParallelMediaHandler } = require('../parallel/CSParallelMediaHandler');
-            const mediaHandler = CSParallelMediaHandler.getInstance();
-            const logPath = await mediaHandler.saveConsoleLogs(message.scenario.name);
-            if (logPath) {
-                result.artifacts = result.artifacts || { screenshots: [], videos: [] };
-                result.artifacts.logs = [logPath];
+            // Capture console logs only if needed
+            if (this.configManager.getBoolean('CAPTURE_CONSOLE_LOGS', false)) {
+                const { CSParallelMediaHandler } = this.getModule('../parallel/CSParallelMediaHandler');
+                const mediaHandler = CSParallelMediaHandler.getInstance();
+                const logPath = await mediaHandler.saveConsoleLogs(message.scenario.name);
+                if (logPath) {
+                    result.artifacts = result.artifacts || { screenshots: [], videos: [] };
+                    result.artifacts.logs = [logPath];
+                }
             }
 
             // Extract ADO metadata if integration is enabled
-            if (configManager.getBoolean('ADO_INTEGRATION_ENABLED', false)) {
+            if (this.configManager.getBoolean('ADO_INTEGRATION_ENABLED', false)) {
+                const { CSADOTagExtractor } = this.getModule('../ado/CSADOTagExtractor');
                 const tagExtractor = CSADOTagExtractor.getInstance();
                 const adoMetadata = tagExtractor.extractMetadata(message.scenario, message.feature);
                 result.adoMetadata = adoMetadata;
@@ -257,11 +349,9 @@ class WorkerProcess {
             // Handle browser reuse or close based on configuration
             try {
                 if (this.browserManager) {
-                    const { CSConfigurationManager } = require('../core/CSConfigurationManager');
-                    const configManager = CSConfigurationManager.getInstance();
-                    const browserReuseEnabled = configManager.getBoolean('BROWSER_REUSE_ENABLED', false);
-                    const clearStateOnReuse = configManager.getBoolean('BROWSER_REUSE_CLEAR_STATE', true);
-                    const closeAfterScenarios = configManager.getNumber('BROWSER_REUSE_CLOSE_AFTER_SCENARIOS', 0);
+                    const browserReuseEnabled = this.configManager.getBoolean('BROWSER_REUSE_ENABLED', false);
+                    const clearStateOnReuse = this.configManager.getBoolean('BROWSER_REUSE_CLEAR_STATE', true);
+                    const closeAfterScenarios = this.configManager.getNumber('BROWSER_REUSE_CLOSE_AFTER_SCENARIOS', 0);
 
                     if (browserReuseEnabled) {
                         // Track scenario count for periodic browser restart
@@ -333,21 +423,76 @@ class WorkerProcess {
                 // Ignore cleanup errors
                 console.debug(`[Worker ${this.workerId}] Error during browser cleanup: ${e}`);
             }
+
+            // NOW collect artifacts after browser operations (close/clear) are complete
+            // This ensures video, HAR, and trace files are properly saved
+            if (this.browserManager) {
+                try {
+                    console.log(`[Worker ${this.workerId}] Collecting artifacts after browser operations...`);
+                    const artifacts = await this.browserManager.getSessionArtifacts();
+                    console.log(`[Worker ${this.workerId}] Session artifacts collected:`, {
+                        screenshots: artifacts?.screenshots?.length || 0,
+                        videos: artifacts?.videos?.length || 0,
+                        traces: artifacts?.traces?.length || 0,
+                        har: artifacts?.har?.length || 0
+                    });
+                    result.artifacts = artifacts || { screenshots: [], videos: [] };
+
+                    // Also include any screenshots from the scenario result
+                    if (scenarioResult.artifacts && scenarioResult.artifacts.screenshots) {
+                        result.artifacts.screenshots = [
+                            ...result.artifacts.screenshots,
+                            ...scenarioResult.artifacts.screenshots
+                        ];
+                    }
+                } catch (e) {
+                    console.debug(`[Worker ${this.workerId}] Error collecting artifacts: ${e}`);
+                    result.artifacts = scenarioResult.artifacts || { screenshots: [], videos: [] };
+                }
+            } else {
+                result.artifacts = scenarioResult.artifacts || { screenshots: [], videos: [] };
+            }
         }
 
         result.duration = Date.now() - startTime;
+
+        // Send performance metrics periodically
+        if (this.performanceMetrics.size > 0 && Math.random() < 0.1) { // 10% of the time
+            this.sendMessage({
+                type: 'metrics',
+                metrics: Object.fromEntries(this.performanceMetrics)
+            });
+        }
+
         this.sendMessage(result);
     }
 
     private sendMessage(message: any) {
         try {
-            if (process.send && process.connected) {
-                process.send(message);
-            } else {
-                console.error(`[Worker ${this.workerId}] Cannot send message - process not connected`);
+            // Check if we can actually send messages
+            if (!process.send) {
+                return; // Not in a child process, can't send
             }
-        } catch (error) {
-            console.error(`[Worker ${this.workerId}] Error sending message:`, error);
+
+            if (!process.connected) {
+                console.error(`[Worker ${this.workerId}] Cannot send message - process not connected`);
+                return;
+            }
+
+            // Try to send the message
+            process.send(message, (error: any) => {
+                if (error) {
+                    // Handle EPIPE and other send errors silently
+                    if (error.code !== 'EPIPE') {
+                        console.error(`[Worker ${this.workerId}] Error sending message:`, error.message);
+                    }
+                }
+            });
+        } catch (error: any) {
+            // Handle synchronous errors
+            if (error.code !== 'EPIPE') {
+                console.error(`[Worker ${this.workerId}] Error sending message:`, error.message);
+            }
         }
     }
 

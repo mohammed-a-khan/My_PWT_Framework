@@ -20,6 +20,7 @@ export interface ADOMetadata {
 export class CSADOTagExtractor {
     private static instance: CSADOTagExtractor;
     private config: CSConfigurationManager;
+    private metadataCache: Map<string, ADOMetadata> = new Map();
 
     // Patterns for extracting IDs from tags
     private static readonly PATTERNS = {
@@ -52,6 +53,16 @@ export class CSADOTagExtractor {
      * Supports mix-and-match (e.g., feature plan with scenario suite)
      */
     public extractMetadata(scenario: ParsedScenario, feature?: ParsedFeature): ADOMetadata {
+        // Create a cache key based on scenario and feature tags
+        const scenarioTagsStr = (scenario.tags || []).join(',');
+        const featureTagsStr = feature ? (feature.tags || []).join(',') : '';
+        const cacheKey = `${scenario.name}::${scenarioTagsStr}::${featureTagsStr}`;
+
+        // Return cached result if available
+        if (this.metadataCache.has(cacheKey)) {
+            return this.metadataCache.get(cacheKey)!;
+        }
+
         const metadata: ADOMetadata = {
             testCaseIds: []
         };
@@ -59,8 +70,7 @@ export class CSADOTagExtractor {
         const scenarioTags = scenario.tags || [];
         const featureTags = feature?.tags || [];
 
-        CSReporter.debug(`Extracting ADO metadata from tags: ${[...featureTags, ...scenarioTags].join(', ')}`);
-
+        // Only log once at end with extracted IDs, not during extraction
         // Extract feature-level plan and suite (defaults)
         let featurePlanId: number | undefined;
         let featureSuiteId: number | undefined;
@@ -72,14 +82,12 @@ export class CSADOTagExtractor {
                 const planMatch = tag.match(CSADOTagExtractor.PATTERNS.TEST_PLAN);
                 if (planMatch) {
                     featurePlanId = parseInt(planMatch[1]);
-                    CSReporter.debug(`Found feature-level test plan ID: ${featurePlanId}`);
                 }
             }
             if (!featureSuiteId) {
                 const suiteMatch = tag.match(CSADOTagExtractor.PATTERNS.TEST_SUITE);
                 if (suiteMatch) {
                     featureSuiteId = parseInt(suiteMatch[1]);
-                    CSReporter.debug(`Found feature-level test suite ID: ${featureSuiteId}`);
                 }
             }
             if (!featureBuildId) {
@@ -110,14 +118,12 @@ export class CSADOTagExtractor {
                 const planMatch = tag.match(CSADOTagExtractor.PATTERNS.TEST_PLAN);
                 if (planMatch) {
                     scenarioPlanId = parseInt(planMatch[1]);
-                    CSReporter.debug(`Found scenario-level test plan ID: ${scenarioPlanId}`);
                 }
             }
             if (!scenarioSuiteId) {
                 const suiteMatch = tag.match(CSADOTagExtractor.PATTERNS.TEST_SUITE);
                 if (suiteMatch) {
                     scenarioSuiteId = parseInt(suiteMatch[1]);
-                    CSReporter.debug(`Found scenario-level test suite ID: ${scenarioSuiteId}`);
                 }
             }
             if (!scenarioBuildId) {
@@ -145,17 +151,13 @@ export class CSADOTagExtractor {
             metadata.testCaseId = metadata.testCaseIds[0];
         }
 
-        // Log inheritance decisions
-        if (scenarioPlanId && featurePlanId && scenarioPlanId !== featurePlanId) {
-            CSReporter.debug(`Using scenario plan ${scenarioPlanId} (overrides feature plan ${featurePlanId})`);
-        }
-        if (scenarioSuiteId && featureSuiteId && scenarioSuiteId !== featureSuiteId) {
-            CSReporter.debug(`Using scenario suite ${scenarioSuiteId} (overrides feature suite ${featureSuiteId})`);
+        // Only log final ADO metadata if we have something to report, use debug level to reduce noise
+        if (metadata.testCaseIds.length > 0 || metadata.testPlanId || metadata.testSuiteId) {
+            CSReporter.debug(`ADO Metadata: Plan=${metadata.testPlanId}, Suite=${metadata.testSuiteId}, TestCases=[${metadata.testCaseIds.join(', ')}]`);
         }
 
-        if (metadata.testCaseIds.length > 0 || metadata.testPlanId || metadata.testSuiteId) {
-            CSReporter.info(`ADO Metadata extracted: Plan=${metadata.testPlanId}, Suite=${metadata.testSuiteId}, TestCases=[${metadata.testCaseIds.join(', ')}]`);
-        }
+        // Cache the result
+        this.metadataCache.set(cacheKey, metadata);
 
         return metadata;
     }
@@ -175,13 +177,12 @@ export class CSADOTagExtractor {
                         metadata.testCaseIds.push(id);
                     }
                 }
-                CSReporter.debug(`Found multiple test case IDs: ${ids.join(', ')}`);
+                // Removed verbose logging
             } else if (match[2]) {
                 // Single ID
                 const id = parseInt(match[2]);
                 if (!isNaN(id) && !metadata.testCaseIds.includes(id)) {
                     metadata.testCaseIds.push(id);
-                    CSReporter.debug(`Found test case ID: ${id}`);
                 }
             }
         }
