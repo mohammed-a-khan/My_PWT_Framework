@@ -72,6 +72,7 @@ export class CSBDDRunner {
     private parallelExecutionDone: boolean = false;
     private scenarioCountForReuse: number = 0;
     private adoIntegration: any; // CSADOIntegration - lazy loaded
+    private lastScenarioError: any = null; // Track last scenario error for ADO reporting
 
     private constructor() {
         this.bddEngine = CSBDDEngine.getInstance();
@@ -198,14 +199,12 @@ export class CSBDDRunner {
             
             CSReporter.info(`Found ${features.length} features to execute`);
 
-            // Only load step definitions for sequential execution
+            // Only skip step loading if explicitly running in parallel mode
             // For parallel execution, workers will load their own steps
-            const parallelValue = typeof options.parallel === 'number' ? options.parallel :
-                                  options.parallel === true ? 2 :
-                                  this.config.getNumber('PARALLEL', 1);
-            const shouldLoadSteps = parallelValue <= 1;
+            const isParallelMode = options.parallel === true ||
+                                  (typeof options.parallel === 'number' && options.parallel > 1);
 
-            if (shouldLoadSteps) {
+            if (!isParallelMode) {
                 // Load required step definitions for sequential execution
                 await this.bddEngine.loadRequiredStepDefinitions(features);
             } else {
@@ -1009,8 +1008,8 @@ export class CSBDDRunner {
                         iteration: iterationNumber,
                         iterationData: iterationData, // Use the clean filtered data for comments
                         name: scenarioResult.name,
-                        // Capture error information from scenarioResult - this is what was missing!
-                        error: scenarioResult.error || (scenarioResult.status === 'failed' ? 'Test failed' : undefined),
+                        // Capture error information from scenarioResult - MUST use errorMessage field name!
+                        errorMessage: scenarioResult.error || (scenarioResult.status === 'failed' ? 'Test failed' : undefined),
                         stackTrace: scenarioResult.stackTrace || scenarioResult.error  // Use error as stack if no separate stack
                     };
 
@@ -1034,8 +1033,8 @@ export class CSBDDRunner {
                         // Collect error details from each failed iteration
                         const errorDetails: string[] = [];
                         failedResults.forEach((result, index) => {
-                            if (result.error || result.stackTrace) {
-                                errorDetails.push(`Iteration ${result.iteration || index + 1}: ${result.error || 'Test failed'}`);
+                            if (result.errorMessage || result.stackTrace) {
+                                errorDetails.push(`Iteration ${result.iteration || index + 1}: ${result.errorMessage || 'Test failed'}`);
                             }
                         });
 
@@ -1081,6 +1080,9 @@ export class CSBDDRunner {
         originalExamples?: any,
         usedColumns?: Set<string>
     ): Promise<void> {
+        // Clear any previous scenario error
+        this.lastScenarioError = null;
+
         // Track scenario start time for accurate duration
         const scenarioStartTime = Date.now();
 
@@ -1160,6 +1162,9 @@ export class CSBDDRunner {
             }
 
         } catch (error: any) {
+            // Store the error for ADO reporting
+            this.lastScenarioError = error;
+
             CSReporter.failScenario(error.message);
             await this.captureArtifactsIfNeeded('failed');
 
@@ -1168,17 +1173,17 @@ export class CSBDDRunner {
 
             // Record video and HAR if enabled
             await this.captureFailureArtifacts();
-            
+
             // Retry logic
             if (options.retry && options.retry > 0) {
                 CSReporter.info(`Retrying scenario (attempt ${options.retry})...`);
                 await this.executeSingleScenario(scenario, feature, { ...options, retry: options.retry - 1 }, exampleRow, exampleHeaders);
                 return; // Return after retry, don't throw
             }
-            
+
             // Log the error but don't throw it - let the scenario fail but continue with other scenarios
             CSReporter.error(`Scenario failed: ${scenarioName} - ${error.message}`);
-            
+
             // Add to failed scenarios tracking
             this.failedScenarios.push({ scenario: scenarioName, feature: feature.name, error: error.message });
             this.anyTestFailed = true;  // Track that at least one test failed
@@ -1645,10 +1650,10 @@ export class CSBDDRunner {
                     screenshot: matchingStep?.screenshot || step.screenshot
                 };
             }) : [],
-            // Extract error from the first failed step
-            error: lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined,
-            // Also extract stack trace if available
-            stackTrace: lastResult?.steps?.find(s => s.status === 'fail' && s.error)?.error || undefined
+            // Extract error from the first failed step or from the exception caught
+            error: this.lastScenarioError?.message || lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined,
+            // Extract stack trace from the caught exception or use the error string if no exception
+            stackTrace: this.lastScenarioError?.stack || lastResult?.steps?.find(s => s.status === 'fail')?.error || undefined
         };
 
         // Get artifacts from browser manager

@@ -218,10 +218,10 @@ export class CSReporter {
     private static log(level: string, message: string): void {
         const timestamp = new Date().toISOString();
         const logMessage = `[${timestamp}] [${level}] ${message}`;
-        
+
         // Store in log buffer
         this.logBuffer.push(logMessage);
-        
+
         // Add to current step if it exists
         if (this.currentStep && level !== 'STEP' && level !== 'TEST' && level !== 'FEATURE') {
             // Add detailed log entry to current step
@@ -235,7 +235,18 @@ export class CSReporter {
                 timestamp: timestamp
             });
         }
-        
+
+        // Check log level hierarchy
+        const logLevel = process.env.LOG_LEVEL || 'DEBUG';
+        const levels = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+        const currentLevelIndex = levels.indexOf(level);
+        const configuredLevelIndex = levels.indexOf(logLevel.toUpperCase());
+
+        // Skip console output if current level is below configured level
+        if (currentLevelIndex !== -1 && configuredLevelIndex !== -1 && currentLevelIndex < configuredLevelIndex) {
+            return;
+        }
+
         // Console output with colors
         const colors: any = {
             'PASS': '\x1b[32m',    // Green
@@ -248,10 +259,10 @@ export class CSReporter {
             'STEP': '\x1b[37m',    // White
             'FEATURE': '\x1b[34m', // Blue
         };
-        
+
         const color = colors[level] || '\x1b[37m';
         const reset = '\x1b[0m';
-        
+
         console.log(`${color}${logMessage}${reset}`);
         this.logBuffer.push(logMessage);
     }

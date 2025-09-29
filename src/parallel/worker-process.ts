@@ -89,22 +89,23 @@ class WorkerProcess {
     }
 
     private async preloadModules() {
-        // Preload critical modules in background
+        // Preload critical modules AND initialize them immediately for faster first scenario
         try {
             const modules = [
                 '../bdd/CSBDDRunner',
                 '../core/CSConfigurationManager',
-                '../browser/CSBrowserManager'
+                '../browser/CSBrowserManager',
+                '../ado/CSADOIntegration'
             ];
 
             for (const module of modules) {
                 this.getModule(module);
             }
 
-            // Don't initialize singletons here as they may block
-            // They'll be initialized when needed
-        } catch (e) {
-            // Ignore preload errors
+            // Initialize singletons immediately to avoid delay on first scenario
+            await this.lazyInitialize();
+        } catch (e: any) {
+            console.debug(`[Worker ${this.workerId}] Preload warning:`, e.message);
         }
     }
 

@@ -202,6 +202,9 @@ DASHBOARD_ENABLED=true
 # Credentials (encrypted)
 DEFAULT_USERNAME=testuser
 DEFAULT_PASSWORD=ENCRYPTED:a8f7d9s8f7d9f8
+
+# Log Level Control
+LOG_LEVEL=INFO  # DEBUG | INFO | WARN | ERROR (hide debug messages with INFO or higher)
 ```
 
 ### Variable Interpolation

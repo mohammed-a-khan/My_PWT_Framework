@@ -91,6 +91,10 @@ export class CSConfigurationManager {
             const config = dotenv.parse(fs.readFileSync(fullPath));
             Object.entries(config).forEach(([key, value]) => {
                 this.config.set(key, value);
+                // Set LOG_LEVEL to process.env so it's available immediately for CSReporter
+                if (key === 'LOG_LEVEL') {
+                    process.env.LOG_LEVEL = value;
+                }
             });
             // Use console.log instead of CSReporter for performance
             if (process.env.DEBUG) {

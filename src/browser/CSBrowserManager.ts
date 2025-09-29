@@ -263,14 +263,14 @@ export class CSBrowserManager {
         dirs = resultsManager.getDirectories();
 
         // Debug log artifact configuration
-        console.log(`[BrowserManager] Artifact configuration:`, {
-            videoMode,
-            harCaptureMode: this.config.get('HAR_CAPTURE_MODE', 'never'),
-            traceCaptureMode: this.config.get('TRACE_CAPTURE_MODE', 'never'),
-            harEnabled: this.config.getBoolean('BROWSER_HAR_ENABLED', false),
-            traceEnabled: this.config.getBoolean('BROWSER_TRACE_ENABLED', false),
-            workerId: this.workerId || 'main'
-        });
+        // console.log(`[BrowserManager] Artifact configuration:`, {
+        //     videoMode,
+        //     harCaptureMode: this.config.get('HAR_CAPTURE_MODE', 'never'),
+        //     traceCaptureMode: this.config.get('TRACE_CAPTURE_MODE', 'never'),
+        //     harEnabled: this.config.getBoolean('BROWSER_HAR_ENABLED', false),
+        //     traceEnabled: this.config.getBoolean('BROWSER_TRACE_ENABLED', false),
+        //     workerId: this.workerId || 'main'
+        // });
 
         CSReporter.debug(`Video mode configured: ${videoMode} (Worker: ${this.workerId || 'main'})`);
         if (videoMode !== 'off' && videoMode !== 'never') {

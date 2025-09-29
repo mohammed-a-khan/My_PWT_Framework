@@ -1268,7 +1268,7 @@ BROWSER_DEVTOOLS=true
 BROWSER_SLOWMO=500
 BROWSER_START_FULLSCREEN=false
 BROWSER_STRICT_SELECTORS=true
-LOG_LEVEL=debug
+LOG_LEVEL=DEBUG  # Show all logs including debug (set to INFO to hide debug messages)
 VERBOSE_REPORTING=true
 ```
 
@@ -3755,6 +3755,45 @@ CSReporter.log({
   screenshot: true
 })
 ```
+
+### 6.1.1 Log Level Configuration
+
+The framework supports log level filtering to control console output verbosity:
+
+```properties
+# In config/global.env
+LOG_LEVEL=INFO  # Set the minimum log level to display
+```
+
+**Log Level Hierarchy (from lowest to highest):**
+- `DEBUG` - Detailed debugging information (gray)
+- `INFO` - General informational messages (cyan)
+- `WARN` - Warning messages (yellow)
+- `ERROR` - Error messages (red)
+
+**How it works:**
+When you set a log level, you see that level and all higher priority levels:
+
+| LOG_LEVEL | Visible Logs | Hidden Logs |
+|-----------|-------------|-------------|
+| DEBUG | All logs (DEBUG, INFO, WARN, ERROR) | None |
+| INFO | INFO, WARN, ERROR | DEBUG |
+| WARN | WARN, ERROR | DEBUG, INFO |
+| ERROR | ERROR only | DEBUG, INFO, WARN |
+
+**Usage Examples:**
+```bash
+# Hide debug messages in production
+LOG_LEVEL=INFO npm run test
+
+# Show only warnings and errors
+LOG_LEVEL=WARN npm run test
+
+# Show everything (default)
+LOG_LEVEL=DEBUG npm run test
+```
+
+**Note:** Test-specific messages (PASS, FAIL, FEATURE, TEST, STEP) are always shown regardless of LOG_LEVEL.
 
 ### 6.2 CSReportGenerator - Report Formats
 
