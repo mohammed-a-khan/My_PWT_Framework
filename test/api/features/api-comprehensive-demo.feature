@@ -69,7 +69,7 @@ Feature: Comprehensive API Testing Demonstration
   @github-api @oauth2
   Scenario: Test GitHub API with Personal Access Token
     Given the API base URL is "https://api.github.com"
-    And I use bearer token "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"
+    And I use bearer token "ENCRYPTED:eyJlbmNyeXB0ZWQiOiJXN2FPdUZlVnpMaktKNmxjM2dmMGN2aTMwQ21jakdpVGVEWXV2cjRwTW1XNjNhYjNla1NQeEE9PSIsIml2IjoicHJ3UnQxUW1hMEFUMTBGcTYvK3U3QT09IiwidGFnIjoiZitNbU1DelNzbU5sdytUS250bTFSQT09In0="
     And I set request header "Accept" to "application/vnd.github.v3+json"
     When I send a GET request to "/user"
     Then the response status should be 200
