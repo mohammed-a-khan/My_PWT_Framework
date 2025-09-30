@@ -118,29 +118,55 @@ class WorkerProcess {
         return moduleCache.get(moduleName);
     }
 
+
     private async lazyInitialize() {
         if (this.isInitialized) return;
 
         const startTime = Date.now();
 
         try {
-            // Lazy load modules only when needed
+            // Always load core modules
             const { CSBDDRunner } = this.getModule('../bdd/CSBDDRunner');
             const { CSConfigurationManager } = this.getModule('../core/CSConfigurationManager');
-            const { CSBrowserManager } = this.getModule('../browser/CSBrowserManager');
 
             this.bddRunner = CSBDDRunner.getInstance();
             this.configManager = CSConfigurationManager.getInstance();
-            this.browserManager = CSBrowserManager.getInstance();
+
+            // Browser manager will be loaded conditionally during test execution
+            this.browserManager = null;
 
             this.isInitialized = true;
 
             this.sendMessage({
                 type: 'log',
-                message: `Initialized in ${Date.now() - startTime}ms`
+                message: `Core modules initialized in ${Date.now() - startTime}ms`
             });
         } catch (error) {
             console.error(`[Worker ${this.workerId}] Failed to initialize:`, error);
+            throw error;
+        }
+    }
+
+    private async initializeBrowserIfNeeded(feature: any, scenario: any) {
+        // Use the same logic as sequential execution: check BROWSER_LAUNCH_REQUIRED config
+        const browserLaunchRequired = this.configManager.getBoolean('BROWSER_LAUNCH_REQUIRED', true);
+
+        if (!browserLaunchRequired) {
+            console.log(`[Worker ${this.workerId}] Browser launch disabled by BROWSER_LAUNCH_REQUIRED=false (API test)`);
+            return; // Browser not needed for API tests
+        }
+
+        if (this.browserManager) {
+            return; // Already initialized
+        }
+
+        try {
+            console.log(`[Worker ${this.workerId}] Initializing browser for UI test...`);
+            const { CSBrowserManager } = this.getModule('../browser/CSBrowserManager');
+            this.browserManager = CSBrowserManager.getInstance();
+            console.log(`[Worker ${this.workerId}] Browser manager initialized`);
+        } catch (error) {
+            console.error(`[Worker ${this.workerId}] Failed to initialize browser manager:`, error);
             throw error;
         }
     }
@@ -276,9 +302,8 @@ class WorkerProcess {
             if (!this.stepDefinitionsLoaded.get(projectKey)) {
                 const stepLoadStart = Date.now();
 
-                // Set STEP_DEFINITIONS_PATH for the project
-                const stepPath = `test/${projectKey}/steps;test/${projectKey}/step-definitions`;
-                this.configManager.set('STEP_DEFINITIONS_PATH', stepPath);
+                // DO NOT set STEP_DEFINITIONS_PATH - it should be read from configuration
+                // The CSBDDRunner.loadProjectSteps() will use the configured path or default
 
                 // Now load the steps with the correct path
                 await this.bddRunner.loadProjectSteps(projectKey);

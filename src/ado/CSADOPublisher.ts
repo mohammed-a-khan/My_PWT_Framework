@@ -839,9 +839,13 @@ export class CSADOPublisher {
 
     /**
      * Check if we have any test results to publish
+     * Returns true only if test runs were actually started (not just config enabled)
      */
     public hasTestResults(): boolean {
-        return this.scenarioResults.size > 0 || this.iterationResults.size > 0;
+        // Only return true if we have both:
+        // 1. Active test runs (validation passed and test runs were started)
+        // 2. Scenario results to publish
+        return this.testRunsByPlan.size > 0 && (this.scenarioResults.size > 0 || this.iterationResults.size > 0);
     }
 
     /**

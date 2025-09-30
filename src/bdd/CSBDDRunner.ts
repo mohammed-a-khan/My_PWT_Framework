@@ -1115,7 +1115,20 @@ export class CSBDDRunner {
         adoIntegration.beforeScenario(scenario, feature);
 
         // Check if browser launch is required (can be disabled for API-only tests)
-        const browserLaunchRequired = this.config.getBoolean('BROWSER_LAUNCH_REQUIRED', true);
+        let browserLaunchRequired = this.config.getBoolean('BROWSER_LAUNCH_REQUIRED', true);
+
+        // Enhanced API detection: Also check for @api tag as fallback
+        if (browserLaunchRequired) {
+            const allTags = [...(feature.tags || []), ...(scenario.tags || [])];
+            const hasApiTag = allTags.some((tag: string) =>
+                tag === '@api' || tag === 'api' || tag.toLowerCase().includes('api')
+            );
+
+            if (hasApiTag) {
+                browserLaunchRequired = false;
+                CSReporter.info(`Detected @api tag - disabling browser for API-only test: ${scenarioName}`);
+            }
+        }
 
         if (browserLaunchRequired) {
             // Create browser context and page for this scenario
@@ -1716,8 +1729,8 @@ export class CSBDDRunner {
                 undefined
         };
 
-        // Get artifacts from browser manager
-        const artifacts = await this.browserManager.getSessionArtifacts();
+        // Get artifacts from browser manager (only if browser manager exists)
+        const artifacts = this.browserManager ? await this.browserManager.getSessionArtifacts() : { screenshots: [], videos: [], traces: [], har: [] };
 
         // Get screenshots from scenario context and add to artifacts
         const scenarioScreenshots = this.scenarioContext.getScreenshots();

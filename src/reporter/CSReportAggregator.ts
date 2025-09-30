@@ -9,6 +9,7 @@ import { CSReporter } from './CSReporter';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSWorldClassReportGenerator_Enhanced } from './CSWorldClassReportGenerator_Enhanced';
 import { CSTestResultsManager } from './CSTestResultsManager';
+import { CSADOIntegration } from '../ado/CSADOIntegration';
 
 export class CSReportAggregator {
     private static instance: CSReportAggregator;
@@ -194,9 +195,30 @@ export class CSReportAggregator {
 
             CSReporter.info(`✅ Parallel execution report generated successfully`);
 
-            // Finalize test run (ZIP if configured)
+            // Finalize test run (ZIP if configured) - conditional based on ADO integration status
             const resultsManager = CSTestResultsManager.getInstance();
-            await resultsManager.finalizeTestRun();
+            const adoEnabled = this.config.getBoolean('ADO_ENABLED', false);
+            const adoIntegration = CSADOIntegration.getInstance();
+            const adoPublisher = adoIntegration.getPublisher();
+
+            // Check if ADO is actually active (not just enabled in config, but has test results to publish)
+            const adoActiveWithResults = adoEnabled && adoPublisher && adoPublisher.hasTestResults();
+
+            // Determine if we should zip based on:
+            // 1. REPORTS_ZIP_RESULTS is explicitly true, OR
+            // 2. ADO is active with test results (always zip for ADO)
+            const shouldZip = this.config.getBoolean('REPORTS_ZIP_RESULTS', false) || adoActiveWithResults;
+
+            if (shouldZip) {
+                if (adoActiveWithResults) {
+                    CSReporter.info('Creating zip file for ADO integration with test results');
+                } else {
+                    CSReporter.info('Creating zip file (ADO not enabled)');
+                }
+                await resultsManager.finalizeTestRun();
+            } else {
+                CSReporter.info(`Test results available at: ${resultsManager.getCurrentTestRunDir()}`);
+            }
 
         } catch (error: any) {
             CSReporter.error(`Failed to generate consolidated report: ${error.message}`);
