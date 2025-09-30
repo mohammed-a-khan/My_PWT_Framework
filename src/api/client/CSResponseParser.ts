@@ -54,16 +54,24 @@ export class CSResponseParser {
                 return this.parseText(response.body);
             }
 
-            return response.body;
+            // Default: try to parse as JSON first, then return as text
+            try {
+                return this.parseJson(response.body);
+            } catch {
+                // If not JSON, convert to string
+                return this.convertToString(response.body);
+            }
 
         } catch (error) {
             CSReporter.warn(`Failed to parse response as ${contentType}: ${(error as Error).message}`);
-            return response.body;
+            // On error, try to return as string
+            return this.convertToString(response.body);
         }
     }
 
     public parseJson(data: any): any {
-        if (typeof data === 'object') {
+        // Don't treat Buffer as a JSON object
+        if (typeof data === 'object' && !Buffer.isBuffer(data)) {
             return data;
         }
 

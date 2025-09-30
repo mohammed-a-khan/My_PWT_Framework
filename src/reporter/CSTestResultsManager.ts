@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import archiver from 'archiver';
+import { execSync } from 'child_process';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSReporter } from './CSReporter';
 
@@ -276,21 +276,36 @@ export class CSTestResultsManager {
      */
     private zipDirectory(sourceDir: string, outPath: string): Promise<void> {
         return new Promise((resolve, reject) => {
-            const output = fs.createWriteStream(outPath);
-            const archive = archiver('zip', { zlib: { level: 9 } });
-            
-            output.on('close', () => {
-                CSReporter.debug(`Zip created: ${archive.pointer()} bytes`);
-                resolve();
-            });
-            
-            archive.on('error', (err: any) => {
-                reject(err);
-            });
-            
-            archive.pipe(output);
-            archive.directory(sourceDir, false);
-            archive.finalize();
+            try {
+                // Use native zip command if available (Linux/Mac/WSL)
+                const sourceName = path.basename(sourceDir);
+                const parentDir = path.dirname(sourceDir);
+
+                // Try using zip command (most Unix-like systems)
+                try {
+                    execSync(`cd "${parentDir}" && zip -r "${path.resolve(outPath)}" "${sourceName}" -q`, {
+                        stdio: 'pipe'
+                    });
+                    const stats = fs.statSync(outPath);
+                    CSReporter.debug(`Zip created: ${stats.size} bytes`);
+                    resolve();
+                } catch (zipError) {
+                    // If zip command fails, try tar (should work on most systems)
+                    try {
+                        execSync(`cd "${parentDir}" && tar -czf "${path.resolve(outPath)}" "${sourceName}"`, {
+                            stdio: 'pipe'
+                        });
+                        const stats = fs.statSync(outPath);
+                        CSReporter.debug(`Archive created: ${stats.size} bytes`);
+                        resolve();
+                    } catch (tarError) {
+                        CSReporter.warn('Unable to create zip archive - zip/tar commands not available');
+                        resolve();
+                    }
+                }
+            } catch (error) {
+                reject(error);
+            }
         });
     }
     

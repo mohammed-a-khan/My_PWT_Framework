@@ -29,21 +29,8 @@ export class CSAPIUtilitySteps {
         return context;
     }
 
-    @CSBDDStepDef("user saves {string} as {string}")
-    async saveVariable(value: string, variableName: string): Promise<void> {
-        CSReporter.info(`Saving '${value}' as variable ${variableName}`);
-
-        try {
-            const context = this.getCurrentContext();
-            const interpolatedValue = this.interpolateValue(value, context);
-
-            context.setVariable(variableName, interpolatedValue);
-            CSReporter.pass(`Variable ${variableName} saved with value: ${interpolatedValue}`);
-        } catch (error) {
-            CSReporter.fail(`Failed to save variable: ${(error as Error).message}`);
-            throw error;
-        }
-    }
+    // Removed - duplicate with CSCommonSteps
+    // Use the step from CSCommonSteps instead
 
     @CSBDDStepDef("user saves response JSON path {string} as {string}")
     async saveJSONPathAsVariable(jsonPath: string, variableName: string): Promise<void> {
@@ -92,74 +79,17 @@ export class CSAPIUtilitySteps {
         }
     }
 
-    @CSBDDStepDef("user generates UUID and saves as {string}")
-    async generateAndSaveUUID(variableName: string): Promise<void> {
-        CSReporter.info(`Generating UUID and saving as ${variableName}`);
+    // Removed - duplicate with CSCommonSteps
+    // generateAndSaveUUID - Use the step from CSCommonSteps instead
 
-        try {
-            const context = this.getCurrentContext();
-            const uuid = this.generateUUID();
+    // Removed - duplicate with CSCommonSteps
+    // generateAndSaveTimestamp - Use the step from CSCommonSteps instead
 
-            context.setVariable(variableName, uuid);
-            CSReporter.pass(`UUID saved as ${variableName}: ${uuid}`);
-        } catch (error) {
-            CSReporter.fail(`Failed to generate UUID: ${(error as Error).message}`);
-            throw error;
-        }
-    }
+    // Removed - duplicate with CSCommonSteps
+    // generateRandomNumberAndSave - Use the step from CSCommonSteps instead
 
-    @CSBDDStepDef("user generates timestamp and saves as {string}")
-    async generateAndSaveTimestamp(variableName: string): Promise<void> {
-        CSReporter.info(`Generating timestamp and saving as ${variableName}`);
-
-        try {
-            const context = this.getCurrentContext();
-            const timestamp = Date.now();
-
-            context.setVariable(variableName, timestamp);
-            CSReporter.pass(`Timestamp saved as ${variableName}: ${timestamp}`);
-        } catch (error) {
-            CSReporter.fail(`Failed to generate timestamp: ${(error as Error).message}`);
-            throw error;
-        }
-    }
-
-    @CSBDDStepDef("user generates random number between {int} and {int} and saves as {string}")
-    async generateRandomNumber(min: number, max: number, variableName: string): Promise<void> {
-        CSReporter.info(`Generating random number between ${min}-${max} and saving as ${variableName}`);
-
-        try {
-            const context = this.getCurrentContext();
-            const randomNumber = Math.floor(Math.random() * (max - min + 1)) + min;
-
-            context.setVariable(variableName, randomNumber);
-            CSReporter.pass(`Random number saved as ${variableName}: ${randomNumber}`);
-        } catch (error) {
-            CSReporter.fail(`Failed to generate random number: ${(error as Error).message}`);
-            throw error;
-        }
-    }
-
-    @CSBDDStepDef("user generates random string of length {int} and saves as {string}")
-    async generateRandomString(length: number, variableName: string): Promise<void> {
-        CSReporter.info(`Generating random string of length ${length} and saving as ${variableName}`);
-
-        try {
-            const context = this.getCurrentContext();
-            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-            let result = '';
-
-            for (let i = 0; i < length; i++) {
-                result += chars.charAt(Math.floor(Math.random() * chars.length));
-            }
-
-            context.setVariable(variableName, result);
-            CSReporter.pass(`Random string saved as ${variableName}: ${result}`);
-        } catch (error) {
-            CSReporter.fail(`Failed to generate random string: ${(error as Error).message}`);
-            throw error;
-        }
-    }
+    // Removed - duplicate with CSCommonSteps
+    // generateRandomStringAndSave - Use the step from CSCommonSteps instead
 
     @CSBDDStepDef("user prints variable {string}")
     async printVariable(variableName: string): Promise<void> {
@@ -439,7 +369,7 @@ export class CSAPIUtilitySteps {
     }
 
     @CSBDDStepDef("user waits for {int} seconds")
-    async wait(seconds: number): Promise<void> {
+    async waitForDuration(seconds: number): Promise<void> {
         CSReporter.info(`Waiting for ${seconds} seconds`);
 
         try {

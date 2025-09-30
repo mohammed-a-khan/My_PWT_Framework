@@ -25,7 +25,26 @@ export class CSJSONPathValidator {
 
         CSReporter.debug(`Validating JSONPath: ${config.path}`);
 
-        const data = response.body;
+        // Get the response body - should already be parsed properly by CSHttpClient
+        let data = response.body;
+
+        // Debug log the body type and content
+        CSReporter.debug(`Response body type: ${typeof data}`);
+        if (typeof data === 'object' && data !== null) {
+            CSReporter.debug(`Response body keys: ${Object.keys(data).slice(0, 10).join(', ')}`);
+        }
+
+        // If the body is still a string and looks like it should be JSON, parse it
+        if (typeof data === 'string') {
+            try {
+                // Try to parse if it looks like JSON
+                if (data.trim().startsWith('{') || data.trim().startsWith('[')) {
+                    data = JSON.parse(data);
+                }
+            } catch (e) {
+                // Not JSON, use as is
+            }
+        }
 
         // Multiple path validations
         if (config.multiple) {
@@ -219,13 +238,20 @@ export class CSJSONPathValidator {
         const segments = this.parsePath(path);
         let current = data;
 
+        CSReporter.debug(`Extracting path ${path}, segments: ${JSON.stringify(segments)}`);
+        CSReporter.debug(`Starting with data: ${JSON.stringify(current).substring(0, 100)}`)
+
         for (const segment of segments) {
             if (current === null || current === undefined) {
+                CSReporter.debug(`Current is null/undefined at segment ${JSON.stringify(segment)}`);
                 return undefined;
             }
 
+            CSReporter.debug(`Processing segment: ${JSON.stringify(segment)}, current value type: ${typeof current}`);
+
             if (segment.type === 'property') {
                 current = current[segment.value];
+                CSReporter.debug(`After property access '${segment.value}': ${JSON.stringify(current).substring(0, 100)}`);
             } else if (segment.type === 'index') {
                 if (Array.isArray(current)) {
                     const index = parseInt(segment.value);
@@ -274,18 +300,56 @@ export class CSJSONPathValidator {
         // Remove leading $. or $
         path = path.replace(/^\$\.?/, '');
 
-        // Split by dots, but handle brackets specially
-        const parts = path.split(/(?=\[)|(?<=\])\.?/);
+        // First handle bracket notation and then split remaining parts by dots
+        const tokens: string[] = [];
+        let current = '';
+        let inBracket = false;
 
-        for (const part of parts) {
-            if (!part) continue;
+        for (let i = 0; i < path.length; i++) {
+            const char = path[i];
+            const nextChar = path[i + 1];
 
-            if (part === '*') {
+            if (char === '[') {
+                if (current) {
+                    // Split any accumulated path by dots before bracket
+                    tokens.push(...current.split('.').filter(t => t));
+                    current = '';
+                }
+                inBracket = true;
+                current = char;
+            } else if (char === ']') {
+                current += char;
+                tokens.push(current);
+                current = '';
+                inBracket = false;
+                // Skip the dot after bracket if present
+                if (nextChar === '.') {
+                    i++;
+                }
+            } else if (char === '.' && !inBracket) {
+                if (current) {
+                    tokens.push(current);
+                    current = '';
+                }
+            } else {
+                current += char;
+            }
+        }
+
+        if (current) {
+            // Split any remaining path by dots
+            tokens.push(...current.split('.').filter(t => t));
+        }
+
+        for (const token of tokens) {
+            if (!token) continue;
+
+            if (token === '*') {
                 segments.push({ type: 'wildcard', value: '*' });
-            } else if (part.startsWith('..')) {
-                segments.push({ type: 'recursive', value: part.substring(2) });
-            } else if (part.startsWith('[') && part.endsWith(']')) {
-                const content = part.substring(1, part.length - 1);
+            } else if (token.startsWith('..')) {
+                segments.push({ type: 'recursive', value: token.substring(2) });
+            } else if (token.startsWith('[') && token.endsWith(']')) {
+                const content = token.substring(1, token.length - 1);
 
                 if (content === '*') {
                     segments.push({ type: 'wildcard', value: '*' });
@@ -302,7 +366,7 @@ export class CSJSONPathValidator {
                 }
             } else {
                 // Regular property
-                segments.push({ type: 'property', value: part });
+                segments.push({ type: 'property', value: token });
             }
         }
 
@@ -438,6 +502,13 @@ export class CSJSONPathValidator {
 
         if (a === null || b === null) return false;
         if (a === undefined || b === undefined) return false;
+
+        // Special handling for number/string comparison
+        // This allows "200" to equal 200 when comparing query params
+        if ((typeof a === 'string' && typeof b === 'number') ||
+            (typeof a === 'number' && typeof b === 'string')) {
+            return String(a) === String(b);
+        }
 
         if (typeof a !== typeof b) return false;
 

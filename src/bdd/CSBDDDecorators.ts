@@ -22,7 +22,18 @@ export interface StepDefinition {
     stepClass?: any; // Reference to the step definition class
 }
 
-const stepDefinitions: Map<string, StepDefinition[]> = new Map();
+// Use a global singleton for step definitions to avoid module instance issues
+// Force single instance across all module loads
+const GLOBAL_KEY = '__CS_STEP_DEFINITIONS_MAP__';
+
+// Initialize only once
+if (!(global as any)[GLOBAL_KEY]) {
+    (global as any)[GLOBAL_KEY] = new Map<string, StepDefinition[]>();
+    // Also mark that we've initialized it
+    (global as any).__CS_STEP_DEFS_INITIALIZED__ = true;
+}
+
+const stepDefinitions: Map<string, StepDefinition[]> = (global as any)[GLOBAL_KEY];
 
 // Register a step definition globally
 export function registerStepDefinition(pattern: string | RegExp, handler: Function, options?: StepDefinitionOptions): void {
@@ -32,14 +43,12 @@ export function registerStepDefinition(pattern: string | RegExp, handler: Functi
         options,
         type: 'Given' // Default type, will work for all
     };
-    
+
     const className = 'global'; // Use 'global' as key for all steps
     if (!stepDefinitions.has(className)) {
         stepDefinitions.set(className, []);
     }
     stepDefinitions.get(className)!.push(stepDef);
-    
-    CSReporter.debug(`Registered step: ${pattern}`);
 }
 
 // Legacy decorators removed - use @CSBDDStepDef from CSStepRegistry instead
@@ -109,31 +118,42 @@ function registerHook(
     CSReporter.debug(`Registered ${type} hook`);
 }
 
+// Helper function to convert pattern to regex
+function patternToRegex(pattern: string | RegExp): RegExp {
+    if (pattern instanceof RegExp) return pattern;
+
+    if (typeof pattern === 'string') {
+        // First escape special regex characters
+        let regexPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        // Then replace Cucumber placeholders with regex groups
+        regexPattern = regexPattern.replace(/\\\{string\\\}/g, '"([^"]*)"');
+        regexPattern = regexPattern.replace(/\\\{int\\\}/g, '(\\d+)');
+        regexPattern = regexPattern.replace(/\\\{float\\\}/g, '([\\d\\.]+)');
+        regexPattern = regexPattern.replace(/\\\{word\\\}/g, '(\\w+)');
+
+        return new RegExp(`^${regexPattern}$`);
+    }
+
+    return new RegExp(`^${pattern}$`);
+}
+
 export function findStepDefinition(stepText: string, stepType?: string): StepDefinition | undefined {
+    // Check the stepDefinitions Map (now includes bridged CSStepRegistry steps)
     for (const [className, definitions] of stepDefinitions) {
         for (const stepDef of definitions) {
-            let pattern = stepDef.pattern;
-            
-            // Convert Cucumber patterns to regex if it's a string
-            if (typeof pattern === 'string') {
-                // First escape special regex characters
-                let regexPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                
-                // Then replace Cucumber placeholders with regex groups
-                regexPattern = regexPattern.replace(/\\\{string\\\}/g, '"([^"]*)"');
-                regexPattern = regexPattern.replace(/\\\{int\\\}/g, '(\\d+)');
-                regexPattern = regexPattern.replace(/\\\{float\\\}/g, '([\\d\\.]+)');
-                regexPattern = regexPattern.replace(/\\\{word\\\}/g, '(\\w+)');
-                
-                pattern = regexPattern;
-            }
-            
-            const regex = pattern instanceof RegExp ? pattern : new RegExp(`^${pattern}$`);
+            const regex = patternToRegex(stepDef.pattern);
             if (regex.test(stepText)) {
+                // Cache the compiled regex for later use
+                (stepDef as any).compiledRegex = regex;
                 return stepDef;
             }
         }
     }
+
+    // Steps from CSStepRegistry are now bridged to stepDefinitions Map
+    // so we don't need to check CSStepRegistry separately
+
     return undefined;
 }
 
@@ -156,6 +176,11 @@ export function clearStepDefinitions(): void {
     hooks.length = 0;
 }
 
+export function clearStepInstanceCache(): void {
+    stepInstanceCache.clear();
+    CSReporter.debug('Step instance cache cleared');
+}
+
 export async function executeStep(
     stepText: string,
     stepType: string,
@@ -164,28 +189,16 @@ export async function executeStep(
     docString?: string
 ): Promise<void> {
     const stepDef = findStepDefinition(stepText, stepType);
-    
+
     if (!stepDef) {
         throw new Error(`Step definition not found for: ${stepType} ${stepText}`);
     }
-    
+
     // Store current step text in context for page injection
     (context as any).currentStepText = stepText;
-    
-    // Build the regex pattern same way as in findStepDefinition
-    let pattern = stepDef.pattern;
-    if (typeof pattern === 'string') {
-        // Convert Cucumber expression to regex
-        let regexPattern = pattern
-            .replace(/{string}/g, '"([^"]*)"')
-            .replace(/{int}/g, '(\\d+)')
-            .replace(/{float}/g, '([\\d\\.]+)')
-            .replace(/{word}/g, '(\\w+)');
-        
-        pattern = regexPattern;
-    }
-    
-    const regex = pattern instanceof RegExp ? pattern : new RegExp(`^${pattern}$`);
+
+    // Use the cached regex from findStepDefinition or build it once
+    const regex = (stepDef as any).compiledRegex || patternToRegex(stepDef.pattern);
     const matches = stepText.match(regex);
     const args: any[] = [];
 
@@ -346,16 +359,28 @@ export function FeatureContext(target: any, propertyKey: string) {
     Reflect.defineMetadata('featureInjections', featureInjections, target);
 }
 
+// Cache for step class instances to maintain state across steps
+const stepInstanceCache = new Map<any, any>();
+
 // Create step class instance with page injection
 async function createStepInstanceWithPageInjection(context: any, stepHandler: Function): Promise<any> {
     try {
         // Find the step definition to get the step class
         const stepDef = findStepDefinition(context.currentStepText || '', 'Given');
-        
+
         if (stepDef && stepDef.options?.stepClass) {
-            // Create instance of the step class dynamically
             const StepClass = stepDef.options.stepClass;
-            const stepInstance = new StepClass();
+
+            // Check if we already have an instance of this step class
+            let stepInstance = stepInstanceCache.get(StepClass);
+            if (!stepInstance) {
+                // Create instance of the step class dynamically
+                stepInstance = new StepClass();
+                stepInstanceCache.set(StepClass, stepInstance);
+                CSReporter.debug(`Created new instance of step class: ${StepClass.name}`);
+            } else {
+                CSReporter.debug(`Reusing existing instance of step class: ${StepClass.name}`);
+            }
             
             // Get page injection metadata from the step class prototype
             const pageInjections = Reflect.getMetadata('pageInjections', StepClass.prototype) || [];

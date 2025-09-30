@@ -144,7 +144,7 @@ export class CSAPIGenericSteps {
     }
 
     @CSBDDStepDef("I wait for {int} seconds")
-    async wait(seconds: number): Promise<void> {
+    async waitForSeconds(seconds: number): Promise<void> {
         CSReporter.debug(`Waiting for ${seconds} seconds...`);
         await new Promise(resolve => setTimeout(resolve, seconds * 1000));
     }

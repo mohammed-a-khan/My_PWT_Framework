@@ -28,7 +28,7 @@ export class CSAPIRequestHeaderSteps {
     }
 
     @CSBDDStepDef("user sets request header {string} to {string}")
-    async setRequestHeader(headerName: string, headerValue: string): Promise<void> {
+    async setRequestHeaderValue(headerName: string, headerValue: string): Promise<void> {
         CSReporter.info(`Setting header ${headerName} to ${headerValue}`);
 
         try {
@@ -44,7 +44,7 @@ export class CSAPIRequestHeaderSteps {
     }
 
     @CSBDDStepDef("user sets request headers:")
-    async setRequestHeaders(dataTable: any): Promise<void> {
+    async setRequestHeadersFromTable(dataTable: any): Promise<void> {
         CSReporter.info('Setting multiple request headers');
 
         try {

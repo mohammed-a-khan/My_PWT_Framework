@@ -838,6 +838,13 @@ export class CSADOPublisher {
     }
 
     /**
+     * Check if we have any test results to publish
+     */
+    public hasTestResults(): boolean {
+        return this.scenarioResults.size > 0 || this.iterationResults.size > 0;
+    }
+
+    /**
      * Get current test run
      */
     public getCurrentTestRun(): ADOTestRun | undefined {

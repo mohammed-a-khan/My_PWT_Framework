@@ -179,8 +179,9 @@ export class CSApiContext {
     }
 
     public getLastResponse(): CSResponse | undefined {
-        const lastKey = Array.from(this.responses.keys()).pop();
-        return lastKey ? this.responses.get(lastKey) : undefined;
+        // Always return the response stored with key 'last' if it exists
+        // This ensures we get the actual last API response, not just the last saved response
+        return this.responses.get('last');
     }
 
     public clear(): void {
@@ -285,6 +286,12 @@ export class CSApiContext {
 
         if (!merged.timeout) {
             merged.timeout = this.timeout;
+        }
+
+        // Check if followRedirects has been set in context variables
+        const followRedirects = this.getVariable('followRedirects');
+        if (followRedirects !== undefined && merged.followRedirects === undefined) {
+            merged.followRedirects = followRedirects;
         }
 
         return merged;

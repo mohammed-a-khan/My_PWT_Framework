@@ -246,6 +246,7 @@ export class CSHttpClient {
                 timeout: options.timeout || 30000
             };
 
+
             // Use proxy agent if proxy is configured
             if (proxyConfig) {
                 requestOptions.agent = this.proxyManager.createProxyAgent(options.url, requestOptions);
@@ -274,7 +275,7 @@ export class CSHttpClient {
                 this.handleResponse(res, options, requestInfo, resolve, reject);
             });
 
-            req.on('error', (error) => {
+            req.on('error', (error: any) => {
                 CSReporter.error(`Request error: ${error.message} - URL: ${options.url}`);
                 reject(error);
             });
@@ -347,6 +348,8 @@ export class CSHttpClient {
             this.storeCookiesFromResponse(res, new URL(options.url));
 
             const bodyBuffer = await this.readResponseBody(res, options);
+
+
             const body = await this.parseResponseBody(bodyBuffer, res.headers['content-type'], options.responseType);
 
             const response: CSResponse = {
@@ -444,14 +447,22 @@ export class CSHttpClient {
             return text;
         }
 
-        if (!contentType || responseType === 'json') {
+        // Check if it's JSON content type or no content type specified
+        const isJsonContent = !contentType ||
+                            contentType.includes('application/json') ||
+                            contentType.includes('text/json') ||
+                            responseType === 'json';
+
+        if (isJsonContent) {
             try {
                 return JSON.parse(text);
             } catch {
+                // If parsing fails, return the text
                 return text;
             }
         }
 
+        // For other content types, use the response parser
         return this.responseParser.parse({ body: buffer } as CSResponse, contentType);
     }
 

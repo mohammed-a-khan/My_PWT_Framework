@@ -42,8 +42,12 @@ export class CSBDDContext {
     public async initialize(page: any, browserContext: any): Promise<void> {
         this.page = page;
         this.browserContext = browserContext;
-        this.pageFactory = new CSPageFactory(page);
-        
+
+        // Only initialize PageFactory if page is provided (not for API-only tests)
+        if (page) {
+            this.pageFactory = new CSPageFactory(page);
+        }
+
         CSReporter.debug('BDD Context initialized');
     }
     
@@ -118,6 +122,21 @@ export class CSBDDContext {
             return scenarioVar;
         }
 
+        // Check API context if available (for API test variables)
+        try {
+            const { CSApiContextManager } = require('../api/context/CSApiContextManager');
+            const apiContextManager = CSApiContextManager.getInstance();
+            const apiContext = apiContextManager.getCurrentContext();
+            if (apiContext) {
+                const apiVar = apiContext.getVariable(key);
+                if (apiVar !== undefined) {
+                    return apiVar;
+                }
+            }
+        } catch (e) {
+            // API context might not be available in non-API tests
+        }
+
         // Finally check feature context
         const featureVar = this.featureContext.getVariable(key);
         if (featureVar !== undefined) {
@@ -148,22 +167,34 @@ export class CSBDDContext {
     
     // Page Object access
     public async getPage<T>(pageName: string): Promise<T> {
+        if (!this.pageFactory) {
+            throw new Error('Page factory not initialized. Browser may not be available for API-only tests.');
+        }
         return this.pageFactory.create<T>(pageName);
     }
-    
+
     public async getCurrentPage<T>(): Promise<T> {
+        if (!this.pageFactory) {
+            throw new Error('Page factory not initialized. Browser may not be available for API-only tests.');
+        }
         // Return the current page factory context
         return this.pageFactory as any;
     }
     
     // Navigation helpers
     public async navigateTo(url: string): Promise<void> {
+        if (!this.page) {
+            throw new Error('Page not initialized. Browser may not be available for API-only tests.');
+        }
         const fullUrl = this.config.get(url) || url;
         await this.page.goto(fullUrl);
         CSReporter.pass(`Navigated to: ${fullUrl}`);
     }
-    
+
     public async waitForNavigation(): Promise<void> {
+        if (!this.page) {
+            throw new Error('Page not initialized. Browser may not be available for API-only tests.');
+        }
         await this.page.waitForLoadState('networkidle');
     }
     

@@ -2,6 +2,7 @@
 import { CSBrowserManager } from '../browser/CSBrowserManager';
 import { CSConfigurationManager } from '../core/CSConfigurationManager';
 import { CSReporter } from '../reporter/CSReporter';
+import { registerStepDefinition } from './CSBDDDecorators';
 
 export interface StepDefinition {
     pattern: string | RegExp;
@@ -250,7 +251,6 @@ export class CSStepRegistry {
         }
         
         // Register with our BDD Decorators instead of Cucumber
-        const { registerStepDefinition } = require('./CSBDDDecorators');
         registerStepDefinition(pattern, handler, { timeout, stepClass });
         
         // Store in registry for tracking
@@ -321,13 +321,13 @@ export function CSBDDStepDef(description: string, timeout?: number): any {
         // Handle both old and new decorator API
         const actualPropertyKey = typeof propertyKey === 'string' ? propertyKey : propertyKey.name;
         const actualDescriptor = descriptor || Object.getOwnPropertyDescriptor(target, actualPropertyKey);
-        
+
         if (!actualDescriptor) return;
-        
+
         const registry = CSStepRegistry.getInstance();
         // Pass the step class (target.constructor) to the registry
         registry.registerStep(description, actualDescriptor.value, timeout, target.constructor);
-        
+
         return actualDescriptor;
     };
 }

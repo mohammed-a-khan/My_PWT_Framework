@@ -177,7 +177,7 @@ export class CSAPIRequestConfigSteps {
     }
 
     @CSBDDStepDef("user sets query parameter {string} to {string}")
-    async setQueryParameter(key: string, value: string): Promise<void> {
+    async setQueryParam(key: string, value: string): Promise<void> {
         CSReporter.info(`Setting query parameter ${key}`);
 
         try {

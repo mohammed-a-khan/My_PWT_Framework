@@ -836,9 +836,11 @@ export class CSBrowserManager {
             if (shouldKeepHar) {
                 CSReporter.info(`HAR will be saved: ${this.currentHarPath}`);
             } else {
-                // Mark for deletion if all tests passed and mode is 'on-failure'
+                // Mark for deletion based on capture mode and test status
                 this.harsToDelete.push(this.currentHarPath);
-                CSReporter.debug(`HAR marked for deletion (all tests passed): ${this.currentHarPath}`);
+                const reason = harCaptureMode === 'never' ? 'capture mode is never' :
+                              `tests ${finalStatus || 'passed'} with on-failure mode`;
+                CSReporter.debug(`HAR marked for deletion (${reason}): ${this.currentHarPath}`);
             }
         }
 

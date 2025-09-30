@@ -52,6 +52,9 @@ export class CSAuthenticationHandler {
                 case 'custom':
                     return await this.applyCustomAuth(authenticatedRequest, auth);
 
+                case 'certificate':
+                    return this.applyCertificateAuth(authenticatedRequest, auth);
+
                 default:
                     CSReporter.warn(`Unsupported authentication type: ${auth.type}`);
                     return authenticatedRequest;
@@ -489,6 +492,97 @@ export class CSAuthenticationHandler {
 
         CSReporter.debug('Applied Hawk authentication');
         return request;
+    }
+
+    private applyCertificateAuth(request: CSRequestOptions, auth: CSAuthConfig): CSRequestOptions {
+        const { certificate, privateKey, password } = auth.credentials || {};
+        const fs = require('fs');
+        const path = require('path');
+
+        if (!certificate) {
+            throw new Error('Certificate auth requires certificate path');
+        }
+
+        try {
+            // Check if this is a PFX/P12 file
+            const certPath = typeof certificate === 'string' ? certificate : '';
+            const isPfx = certPath.toLowerCase().endsWith('.pfx') || certPath.toLowerCase().endsWith('.p12');
+
+            if (isPfx) {
+                // Handle PFX/PKCS12 certificate
+                if (typeof certificate === 'string' && fs.existsSync(certificate)) {
+                    // Read PFX file as binary
+                    request.pfx = fs.readFileSync(certificate);
+                    if (password) {
+                        request.passphrase = password;
+                    }
+                    CSReporter.debug('Applied PFX certificate authentication');
+                } else {
+                    throw new Error('PFX certificate file not found');
+                }
+            } else {
+                // Handle PEM certificate
+                let certData: string;
+                if (typeof certificate === 'string' && fs.existsSync(certificate)) {
+                    certData = fs.readFileSync(certificate, 'utf8');
+                } else {
+                    certData = certificate.toString(); // Already a Buffer or string content
+                }
+
+                // Clean the certificate data to extract just the certificate part
+                request.cert = this.extractCertificateFromPEM(certData);
+
+                if (privateKey) {
+                    let keyData: string;
+                    if (typeof privateKey === 'string' && fs.existsSync(privateKey)) {
+                        keyData = fs.readFileSync(privateKey, 'utf8');
+                    } else {
+                        keyData = privateKey.toString(); // Already a Buffer or string content
+                    }
+                    request.key = this.extractPrivateKeyFromPEM(keyData);
+                } else {
+                    // Extract private key from the same certificate file if privateKey not specified
+                    request.key = this.extractPrivateKeyFromPEM(certData);
+                }
+
+                if (password) {
+                    request.passphrase = password;
+                }
+
+                CSReporter.debug('Applied PEM certificate authentication');
+            }
+        } catch (error) {
+            throw new Error(`Failed to load certificate: ${(error as Error).message}`);
+        }
+
+        return request;
+    }
+
+    private extractCertificateFromPEM(pemData: string): string {
+        // Extract certificate from PEM data, removing any bag attributes or metadata
+        const certMatch = pemData.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+        if (!certMatch) {
+            throw new Error('No certificate found in PEM data');
+        }
+        return certMatch[0];
+    }
+
+    private extractPrivateKeyFromPEM(pemData: string): string {
+        // Extract private key from PEM data, supporting both encrypted and unencrypted keys
+        const keyPatterns = [
+            /-----BEGIN ENCRYPTED PRIVATE KEY-----[\s\S]*?-----END ENCRYPTED PRIVATE KEY-----/,
+            /-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----/,
+            /-----BEGIN RSA PRIVATE KEY-----[\s\S]*?-----END RSA PRIVATE KEY-----/
+        ];
+
+        for (const pattern of keyPatterns) {
+            const keyMatch = pemData.match(pattern);
+            if (keyMatch) {
+                return keyMatch[0];
+            }
+        }
+
+        throw new Error('No private key found in PEM data');
     }
 
     private calculateHawkMac(

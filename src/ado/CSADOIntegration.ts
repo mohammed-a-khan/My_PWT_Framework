@@ -226,12 +226,15 @@ export class CSADOIntegration {
                 await this.publisher.publishAllResults();
             }
 
-            // For ADO, always create a zip file for attachment (regardless of REPORTS_ZIP_RESULTS flag)
-            // CSReporter.info('Creating test results zip for ADO attachment...');
-            const testResultsPath = await this.resultsManager.createTestResultsZip();
+            // Only create zip and complete test run if we actually have ADO test cases
+            if (this.publisher.hasTestResults()) {
+                // For ADO, create a zip file for attachment when we have test results
+                // CSReporter.info('Creating test results zip for ADO attachment...');
+                const testResultsPath = await this.resultsManager.createTestResultsZip();
 
-            // Complete the test run with results attachment
-            await this.publisher.completeTestRun(testResultsPath);
+                // Complete the test run with results attachment
+                await this.publisher.completeTestRun(testResultsPath);
+            }
         } catch (error) {
             CSReporter.error(`Failed to complete ADO test run: ${error}`);
         }

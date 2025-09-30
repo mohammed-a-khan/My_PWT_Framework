@@ -28,7 +28,7 @@ export class CSAPIRequestBodySteps {
     }
 
     @CSBDDStepDef("user sets request body to:")
-    async setRequestBody(bodyContent: string): Promise<void> {
+    async setRequestBodyContent(bodyContent: string): Promise<void> {
         CSReporter.info('Setting request body');
 
         try {

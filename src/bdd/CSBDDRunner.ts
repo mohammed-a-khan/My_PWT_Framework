@@ -205,7 +205,17 @@ export class CSBDDRunner {
                                   (typeof options.parallel === 'number' && options.parallel > 1);
 
             if (!isParallelMode) {
-                // Load required step definitions for sequential execution
+                // Set the step definition paths from configuration for the project
+                const project = this.config.get('PROJECT', 'common');
+                const stepPaths = this.config.get('STEP_DEFINITIONS_PATH', 'test/common/steps;test/{project}/steps;test/{project}/step-definitions;src/steps');
+
+                // Parse paths and replace {project} placeholder
+                const paths = stepPaths.split(';').map(p => p.trim().replace('{project}', project));
+
+                // Set the paths in BDD engine for selective loading
+                this.bddEngine.setStepDefinitionPaths(paths);
+
+                // Load required step definitions using selective loading
                 await this.bddEngine.loadRequiredStepDefinitions(features);
             } else {
                 CSReporter.debug('Skipping step loading in main process for parallel execution');
@@ -334,7 +344,9 @@ export class CSBDDRunner {
             try {
                 // Pass the overall test status for proper HAR file handling
                 const overallStatus = this.hasFailures() ? 'failed' : 'passed';
-                await this.browserManager.closeAll(overallStatus);
+                if (this.browserManager) {
+                    await this.browserManager.closeAll(overallStatus);
+                }
                 CSReporter.debug(`All browsers closed - artifacts should be saved (overall status: ${overallStatus})`);
             } catch (error) {
                 CSReporter.debug('Error closing browsers: ' + error);
@@ -1101,14 +1113,22 @@ export class CSBDDRunner {
         // ADO: Before scenario hook
         const adoIntegration = this.ensureADOIntegration();
         adoIntegration.beforeScenario(scenario, feature);
-        
-        // Create browser context and page for this scenario
-        const browserManager = await this.ensureBrowserManager();
-        await browserManager.launch();
-        const browserContext = browserManager.getContext();
-        const page = browserManager.getPage();
-        
-        await this.context.initialize(page, browserContext);
+
+        // Check if browser launch is required (can be disabled for API-only tests)
+        const browserLaunchRequired = this.config.getBoolean('BROWSER_LAUNCH_REQUIRED', true);
+
+        if (browserLaunchRequired) {
+            // Create browser context and page for this scenario
+            const browserManager = await this.ensureBrowserManager();
+            await browserManager.launch();
+            const browserContext = browserManager.getContext();
+            const page = browserManager.getPage();
+
+            await this.context.initialize(page, browserContext);
+        } else {
+            // Initialize context without browser for API-only tests
+            await this.context.initialize(null, null);
+        }
         
         try {
             // Execute before hooks
@@ -1366,7 +1386,40 @@ export class CSBDDRunner {
 
             // Always perform cleanup tasks regardless of scenario result
             await this.performScenarioCleanup(options, scenarioStatus);
-            
+
+            // Clear step instance cache between scenarios to avoid state leakage
+            const { clearStepInstanceCache } = require('./CSBDDDecorators');
+            clearStepInstanceCache();
+
+            // Clear API context to prevent state leaking between scenarios
+            try {
+                const { CSApiContextManager } = require('../api/context/CSApiContextManager');
+                const apiContextManager = CSApiContextManager.getInstance();
+                const apiContext = apiContextManager.getCurrentContext();
+                if (apiContext) {
+                    // Clear ALL state, not just variables
+                    apiContext.clearVariables();
+                    apiContext.clearHeaders();
+                    apiContext.clearCookies();
+                    apiContext.clearResponses();
+                    apiContext.auth = null;
+                    apiContext.baseUrl = '';
+                    apiContext.timeout = 30000;
+                    // Reset query params specifically
+                    apiContext.setVariable('queryParams', {});
+                    apiContext.setVariable('requestBody', null);
+                    CSReporter.debug('API context fully reset');
+                }
+
+                // Also clear the API client's state
+                const { CSAPIClient } = require('../api/CSAPIClient');
+                const apiClient = new CSAPIClient();
+                apiClient.clearAuthentication();
+                apiClient.clearHeaders();
+            } catch (e) {
+                // API context might not be available in non-API tests
+            }
+
             CSReporter.endScenario();
             await this.context.cleanupScenario();
         }
@@ -1421,7 +1474,7 @@ export class CSBDDRunner {
                 screenshotCaptureMode === 'on-failure-only'
             );
 
-            if (shouldCaptureScreenshot) {
+            if (shouldCaptureScreenshot && this.browserManager) {
                 try {
                     const page = this.browserManager.getPage();
 
@@ -1697,17 +1750,12 @@ export class CSBDDRunner {
 
         // Get step definition paths from configuration
         const config = CSConfigurationManager.getInstance();
-        const stepPaths = config.get('STEP_DEFINITIONS_PATH');
+        const stepPaths = config.get('STEP_DEFINITIONS_PATH', 'test/common/steps;test/{project}/steps;test/{project}/step-definitions;src/steps');
 
         let paths: string[] = [];
 
-        if (stepPaths) {
-            // If configured, split paths and replace {project} placeholder
-            paths = stepPaths.split(';').map(p => p.trim().replace('{project}', project));
-        } else {
-            // Default: search from project root steps folder
-            paths = ['steps'];
-        }
+        // Use configuration, split paths and replace {project} placeholder
+        paths = stepPaths.split(';').map(p => p.trim().replace('{project}', project));
 
         let filesLoaded = false;
         for (const relativePath of paths) {
@@ -1741,11 +1789,25 @@ export class CSBDDRunner {
             if (entry.isDirectory()) {
                 // Recursively load from subdirectories
                 filesLoaded = this.loadStepFilesRecursively(fullPath) || filesLoaded;
-            } else if (entry.isFile() && entry.name.endsWith('.steps.ts')) {
+            } else if (entry.isFile() && (entry.name.endsWith('.steps.ts') || entry.name.endsWith('.steps.js') || entry.name.endsWith('Steps.js') || entry.name.endsWith('Steps.ts'))) {
                 try {
-                    require(fullPath);
-                    CSReporter.debug(`Loaded step file: ${fullPath}`);
-                    filesLoaded = true;
+                    // If it's a TypeScript file and we're in compiled mode, load the JS version
+                    let fileToLoad = fullPath;
+                    if (fullPath.endsWith('.ts') && fullPath.includes('/src/')) {
+                        // Convert src path to dist path for TypeScript files
+                        fileToLoad = fullPath.replace('/src/', '/dist/').replace('.ts', '.js');
+                    }
+
+                    if (fs.existsSync(fileToLoad)) {
+                        require(fileToLoad);
+                        CSReporter.debug(`Loaded step file: ${fileToLoad}`);
+                        filesLoaded = true;
+                    } else {
+                        // Fall back to original path if compiled version doesn't exist
+                        require(fullPath);
+                        CSReporter.debug(`Loaded step file: ${fullPath}`);
+                        filesLoaded = true;
+                    }
                 } catch (e: any) {
                     CSReporter.warn(`Failed to load step file ${fullPath}: ${e.message}`);
                 }
@@ -1940,6 +2002,7 @@ export class CSBDDRunner {
     
     private async captureFailureArtifacts(): Promise<void> {
         try {
+            if (!this.browserManager) return;
             const page = this.browserManager.getPage();
             const context = this.browserManager.getContext();
             
@@ -2033,7 +2096,9 @@ export class CSBDDRunner {
                     // This ensures traces are saved per-scenario even with browser reuse
                     // Make sure we pass the test status properly
                     const statusToPass = testStatus || 'passed'; // Default to passed if undefined
-                    await (this.browserManager as any).saveTraceIfNeeded?.(statusToPass);
+                    if (this.browserManager) {
+                        await (this.browserManager as any).saveTraceIfNeeded?.(statusToPass);
+                    }
 
                     // Keep browser open but clear state if configured
                     if (clearStateOnReuse) {
@@ -2043,8 +2108,10 @@ export class CSBDDRunner {
                             // Get context and page
                             let context, page;
                             try {
-                                context = this.browserManager.getContext();
-                                page = this.browserManager.getPage();
+                                if (this.browserManager) {
+                                    context = this.browserManager.getContext();
+                                    page = this.browserManager.getPage();
+                                }
                                 CSReporter.debug(`Got context: ${!!context}, Got page: ${!!page}`);
                             } catch (e) {
                                 CSReporter.error(`Failed to get context/page: ${e}`);
@@ -2116,6 +2183,7 @@ export class CSBDDRunner {
      */
     private async captureStepScreenshot(stepName: string): Promise<void> {
         try {
+            if (!this.browserManager) return;
             const page = this.browserManager.getPage();
             if (!page) return;
 
@@ -2150,6 +2218,7 @@ export class CSBDDRunner {
      */
     private async captureScenarioScreenshot(status: 'success' | 'failure'): Promise<void> {
         try {
+            if (!this.browserManager) return;
             const page = this.browserManager.getPage();
             if (!page) return;
 
@@ -2489,6 +2558,7 @@ export class CSBDDRunner {
 
     private async captureArtifactsIfNeeded(status: 'passed' | 'failed'): Promise<void> {
         try {
+            if (!this.browserManager) return;
             const page = this.browserManager.getPage();
             const context = this.browserManager.getContext();
 

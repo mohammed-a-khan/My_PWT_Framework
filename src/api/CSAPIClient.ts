@@ -57,6 +57,23 @@ export class CSAPIClient {
             return response;
 
         } catch (error) {
+            // Check if this is an HTTP error with a response
+            if ((error as any).response) {
+                const response = (error as any).response;
+
+                // Save response to context even for error responses
+                const responseKey = `${mergedOptions.method}_${new URL(mergedOptions.url).pathname}`;
+                context.saveResponse(responseKey, response);
+
+                // Extract cookies if present
+                if (response.cookies) {
+                    response.cookies.forEach((cookie: any) => context.addCookie(cookie));
+                }
+
+                CSReporter.info(`API Request returned status: ${response.status}`);
+                return response;
+            }
+
             CSReporter.fail(`API Request failed: ${(error as Error).message}`);
             throw error;
         }

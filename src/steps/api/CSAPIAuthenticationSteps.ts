@@ -188,7 +188,40 @@ export class CSAPIAuthenticationSteps {
         CSReporter.info(`AWS authentication updated: region=${region}, service=${service}`);
     }
 
-    @CSBDDStepDef("I use NTLM authentication with domain {string}, username {string} and password {string}")
+    @CSBDDStepDef("I use JWT authentication with token {string}")
+    async useJWTAuth(token: string): Promise<void> {
+        const authConfig: CSAuthConfig = {
+            type: 'bearer' as CSAuthType,  // JWT typically uses Bearer scheme
+            credentials: {
+                token
+            }
+        };
+        this.apiClient.setAuthentication(authConfig);
+        const context = this.contextManager.getCurrentContext();
+        if (context) {
+            context.auth = authConfig;
+        }
+        CSReporter.info('JWT authentication configured');
+    }
+
+    @CSBDDStepDef("I use digest authentication with username {string} and password {string}")
+    async useDigestAuth(username: string, password: string): Promise<void> {
+        const authConfig: CSAuthConfig = {
+            type: 'digest' as CSAuthType,
+            credentials: {
+                username,
+                password
+            }
+        };
+        this.apiClient.setAuthentication(authConfig);
+        const context = this.contextManager.getCurrentContext();
+        if (context) {
+            context.auth = authConfig;
+        }
+        CSReporter.info(`Digest authentication configured for user: ${username}`);
+    }
+
+    @CSBDDStepDef("I use NTLM authentication with domain {string} username {string} and password {string}")
     async useNTLMAuth(domain: string, username: string, password: string): Promise<void> {
         const authConfig: CSAuthConfig = {
             type: 'ntlm' as CSAuthType,
@@ -209,46 +242,6 @@ export class CSAPIAuthenticationSteps {
         CSReporter.info(`NTLM authentication configured for ${domain}\\${username}`);
     }
 
-    @CSBDDStepDef("I use digest authentication with username {string} and password {string}")
-    async useDigestAuth(username: string, password: string): Promise<void> {
-        const authConfig: CSAuthConfig = {
-            type: 'digest' as CSAuthType,
-            credentials: {
-                username,
-                password
-            }
-        };
-
-        this.apiClient.setAuthentication(authConfig);
-
-        const context = this.contextManager.getCurrentContext();
-        if (context) {
-            context.auth = authConfig;
-        }
-
-        CSReporter.info(`Digest authentication configured for user: ${username}`);
-    }
-
-    @CSBDDStepDef("I use JWT authentication with token {string}")
-    async useJWTAuth(token: string): Promise<void> {
-        // Token is already resolved by the framework (decrypted and variables substituted)
-
-        const authConfig: CSAuthConfig = {
-            type: 'jwt' as CSAuthType,
-            credentials: {
-                token: token
-            }
-        };
-
-        this.apiClient.setAuthentication(authConfig);
-
-        const context = this.contextManager.getCurrentContext();
-        if (context) {
-            context.auth = authConfig;
-        }
-
-        CSReporter.info('JWT authentication configured');
-    }
 
     @CSBDDStepDef("I use certificate authentication with cert {string} and key {string}")
     async useCertificateAuth(certPath: string, keyPath: string): Promise<void> {

@@ -95,7 +95,7 @@ export class CSBDDEngine {
     }
 
     private initializeStepDefinitionPaths(): void {
-        const pathsConfig = this.config.get('STEP_DEFINITIONS_PATH', 'test/common/steps;test/{project}/steps');
+        const pathsConfig = this.config.get('STEP_DEFINITIONS_PATH', 'test/common/steps;test/{project}/steps;src/steps');
         const project = this.config.get('PROJECT', 'common');
 
         // Parse and expand paths
@@ -108,6 +108,13 @@ export class CSBDDEngine {
         });
 
         this.stepDefinitionPaths = paths;
+    }
+
+    // Public method to set step definition paths explicitly
+    public setStepDefinitionPaths(paths: string[]): void {
+        // Resolve relative to CWD
+        this.stepDefinitionPaths = paths.map(p => path.resolve(process.cwd(), p));
+        CSReporter.debug(`Step definition paths set to: ${this.stepDefinitionPaths.join(', ')}`);
     }
 
     // Parse single feature file
@@ -708,6 +715,7 @@ export class CSBDDEngine {
                         if (await this.fileContainsSteps(file, stepPatterns)) {
                             await this.loadStepFile(file);
                             loadedFiles.push(file);
+                            CSReporter.debug(`Loaded file: ${file}`);
                         }
                     }
                 } else if (stepPath.endsWith('.ts') || stepPath.endsWith('.js')) {
@@ -768,35 +776,51 @@ export class CSBDDEngine {
 
         // Check if file contains any of the step patterns
         for (const pattern of stepPatterns) {
-            // Parameterize the step pattern for decorator matching
-            const parameterizedStep = pattern
-                .replace(/\{[^}]+\}/g, '(.+)')
-                .replace(/"/g, '\\"');
-
-            // Check for exact step definition patterns
-            const exactPatterns = [
-                `@CSBDDStepDef('${parameterizedStep}')`,
-                `@CSBDDStepDef("${parameterizedStep}")`,
-                `@CSBDDStepDef(\`${parameterizedStep}\`)`,
-                `CSBDDStepDef('${parameterizedStep}')`,
-                `CSBDDStepDef("${parameterizedStep}")`,
-                `CSBDDStepDef(\`${parameterizedStep}\`)`
-            ];
-
-            // Check for exact matches
-            for (const exactPattern of exactPatterns) {
-                if (content.includes(exactPattern)) {
-                    return true;
-                }
-            }
-
             // For more flexible matching, check if the file contains the actual step definition text
             try {
-                const stepWords = pattern.split(/\s+/).filter(word => !word.includes('{'));
+                // Remove quoted values and parameters to get base text
+                const baseText = pattern
+                    .replace(/"[^"]*"/g, '')  // Remove quoted strings
+                    .replace(/\d+/g, '')       // Remove numbers
+                    .replace(/^\s*(Given|When|Then|And|But)\s+/i, '') // Remove Gherkin keywords
+                    .trim();
+
+                // Split into significant words (excluding empty strings)
+                const stepWords = baseText.split(/\s+/).filter(word => word.length > 2);
+
                 if (stepWords.length > 0) {
+                    // Create pattern that matches the decorator format with {string} or {int} parameters
                     const searchPattern = stepWords.join('.*');
-                    const regex = new RegExp(`@CSBDDStepDef\\(['\"\`].*${searchPattern}`, 'i');
+                    const regex = new RegExp(`@CSBDDStepDef\\(['\"\`].*${searchPattern}.*['\"\`]\\)`, 'i');
                     if (regex.test(content)) {
+                        return true;
+                    }
+
+                    // Also check for the exact pattern without the Gherkin keyword
+                    const withoutKeyword = pattern.replace(/^\s*(Given|When|Then|And|But)\s+/i, '');
+
+                    // Convert the actual step text to a pattern that matches parameter placeholders
+                    // Be careful with order - more specific patterns first
+                    const stepPattern = withoutKeyword
+                        .replace(/"[^"]*"/g, '{string}')           // Replace quoted strings with {string}
+                        .replace(/\b\d+\.\d+\b/g, '{float}')       // Replace floats (e.g., 3.14) with {float}
+                        .replace(/\b\d+\b/g, '{int}')              // Replace integers with {int}
+                        .replace(/\b(true|false)\b/gi, '{boolean}') // Replace booleans with {boolean}
+                        .replace(/\{[^}]+\}/g, (match) => match);   // Keep existing placeholders as-is
+
+                    // Check if this pattern exists in the file
+                    if (content.includes(stepPattern)) {
+                        return true;
+                    }
+
+                    // Also try a more generic match for any {word} pattern
+                    const genericPattern = withoutKeyword
+                        .replace(/"[^"]*"/g, '{word}')
+                        .replace(/\b\d+\.\d+\b/g, '{word}')
+                        .replace(/\b\d+\b/g, '{word}')
+                        .replace(/\b(true|false)\b/gi, '{word}');
+
+                    if (content.includes(genericPattern)) {
                         return true;
                     }
                 }
@@ -810,9 +834,28 @@ export class CSBDDEngine {
 
     private async loadStepFile(filePath: string): Promise<void> {
         try {
-            // In production, this would properly load and register the step definitions
-            require(filePath);
-            CSReporter.debug(`Loaded step file: ${path.basename(filePath)}`);
+            let fileToLoad = filePath;
+
+            // When using ts-node, always prefer TypeScript files to avoid module instance issues
+            // The issue is that requiring compiled JS files creates different module contexts
+            if (filePath.endsWith('.ts')) {
+                // For ts-node execution, always use the TypeScript file directly
+                // This ensures the same module instance is used across all requires
+                fileToLoad = filePath;
+                CSReporter.debug(`Loading TypeScript file directly: ${filePath}`);
+            } else if (filePath.endsWith('.js')) {
+                // Try to find the TypeScript source if we have a JS file
+                const tsPath = filePath.replace('/dist/', '/src/').replace('.js', '.ts');
+                if (fs.existsSync(tsPath)) {
+                    fileToLoad = tsPath;
+                    CSReporter.debug(`Using TypeScript source: ${tsPath} instead of ${filePath}`);
+                }
+            }
+
+            // Load and register the step definitions
+            // Note: We don't clear the require cache here as it can cause issues with singleton patterns
+            require(fileToLoad);
+            CSReporter.debug(`Successfully loaded step file: ${path.basename(fileToLoad)}`);
         } catch (error: any) {
             CSReporter.error(`Failed to load step file: ${filePath} - ${error.message}`);
         }

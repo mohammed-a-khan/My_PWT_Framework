@@ -21,13 +21,24 @@ export class CSAPIRequestSteps {
         const context = this.contextManager.getCurrentContext();
         const url = this.resolveUrl(endpoint);
 
-        CSReporter.info(`Sending GET request to: ${url}`);
-        const response = await this.apiClient.get(url);
+        // Get query parameters from context if they were set
+        const queryParams = context?.getVariable('queryParams') || {};
+
+        // Build the URL with query parameters
+        let fullUrl = url;
+        if (Object.keys(queryParams).length > 0) {
+            const queryString = new URLSearchParams(queryParams).toString();
+            fullUrl = `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+            CSReporter.debug(`GET request URL with params: ${fullUrl}`);
+        }
+
+        CSReporter.info(`Sending GET request to: ${fullUrl}`);
+        const response = await this.apiClient.get(fullUrl);
 
         if (context) {
             context.saveResponse('last', response);
             context.addToHistory({
-                url,
+                url: fullUrl,
                 method: 'GET',
                 headers: {},
                 startTime: Date.now() - response.duration
@@ -44,8 +55,18 @@ export class CSAPIRequestSteps {
 
         const body = context?.getVariable('requestBody');
 
-        CSReporter.info(`Sending POST request to: ${url}`);
-        const response = await this.apiClient.post(url, body);
+        // Get query parameters from context if they were set
+        const queryParams = context?.getVariable('queryParams') || {};
+
+        // Build the URL with query parameters
+        let fullUrl = url;
+        if (Object.keys(queryParams).length > 0) {
+            const queryString = new URLSearchParams(queryParams).toString();
+            fullUrl = `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+        }
+
+        CSReporter.info(`Sending POST request to: ${fullUrl}`);
+        const response = await this.apiClient.post(fullUrl, body);
 
         if (context) {
             context.saveResponse('last', response);
@@ -73,13 +94,23 @@ export class CSAPIRequestSteps {
             parsedBody = body;
         }
 
-        CSReporter.info(`Sending POST request to: ${url}`);
-        const response = await this.apiClient.post(url, parsedBody);
+        // Get query parameters from context if they were set
+        const queryParams = context?.getVariable('queryParams') || {};
+
+        // Build the URL with query parameters
+        let fullUrl = url;
+        if (Object.keys(queryParams).length > 0) {
+            const queryString = new URLSearchParams(queryParams).toString();
+            fullUrl = `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+        }
+
+        CSReporter.info(`Sending POST request to: ${fullUrl}`);
+        const response = await this.apiClient.post(fullUrl, parsedBody);
 
         if (context) {
             context.saveResponse('last', response);
             context.addToHistory({
-                url,
+                url: fullUrl,
                 method: 'POST',
                 headers: {},
                 body: parsedBody,
@@ -96,8 +127,18 @@ export class CSAPIRequestSteps {
         const url = this.resolveUrl(endpoint);
         const body = context?.getVariable('requestBody');
 
-        CSReporter.info(`Sending PUT request to: ${url}`);
-        const response = await this.apiClient.put(url, body);
+        // Get query parameters from context if they were set
+        const queryParams = context?.getVariable('queryParams') || {};
+
+        // Build the URL with query parameters
+        let fullUrl = url;
+        if (Object.keys(queryParams).length > 0) {
+            const queryString = new URLSearchParams(queryParams).toString();
+            fullUrl = `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+        }
+
+        CSReporter.info(`Sending PUT request to: ${fullUrl}`);
+        const response = await this.apiClient.put(fullUrl, body);
 
         if (context) {
             context.saveResponse('last', response);
@@ -111,8 +152,18 @@ export class CSAPIRequestSteps {
         const context = this.contextManager.getCurrentContext();
         const url = this.resolveUrl(endpoint);
 
-        CSReporter.info(`Sending DELETE request to: ${url}`);
-        const response = await this.apiClient.delete(url);
+        // Get query parameters from context if they were set
+        const queryParams = context?.getVariable('queryParams') || {};
+
+        // Build the URL with query parameters
+        let fullUrl = url;
+        if (Object.keys(queryParams).length > 0) {
+            const queryString = new URLSearchParams(queryParams).toString();
+            fullUrl = `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+        }
+
+        CSReporter.info(`Sending DELETE request to: ${fullUrl}`);
+        const response = await this.apiClient.delete(fullUrl);
 
         if (context) {
             context.saveResponse('last', response);
@@ -127,8 +178,18 @@ export class CSAPIRequestSteps {
         const url = this.resolveUrl(endpoint);
         const body = context?.getVariable('requestBody');
 
-        CSReporter.info(`Sending PATCH request to: ${url}`);
-        const response = await this.apiClient.patch(url, body);
+        // Get query parameters from context if they were set
+        const queryParams = context?.getVariable('queryParams') || {};
+
+        // Build the URL with query parameters
+        let fullUrl = url;
+        if (Object.keys(queryParams).length > 0) {
+            const queryString = new URLSearchParams(queryParams).toString();
+            fullUrl = `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+        }
+
+        CSReporter.info(`Sending PATCH request to: ${fullUrl}`);
+        const response = await this.apiClient.patch(fullUrl, body);
 
         if (context) {
             context.saveResponse('last', response);
@@ -205,10 +266,20 @@ export class CSAPIRequestSteps {
         const context = this.contextManager.getCurrentContext();
         const url = this.resolveUrl(endpoint);
 
-        CSReporter.info(`Uploading file ${filePath} to: ${url}`);
+        // Get query parameters from context if they were set
+        const queryParams = context?.getVariable('queryParams') || {};
+
+        // Build the URL with query parameters
+        let fullUrl = url;
+        if (Object.keys(queryParams).length > 0) {
+            const queryString = new URLSearchParams(queryParams).toString();
+            fullUrl = `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+        }
+
+        CSReporter.info(`Uploading file ${filePath} to: ${fullUrl}`);
 
         const response = await this.apiClient.getHttpClient().uploadFile(
-            url,
+            fullUrl,
             filePath,
             'file'
         );
@@ -222,12 +293,23 @@ export class CSAPIRequestSteps {
 
     @CSBDDStepDef("I download file from {string} to {string}")
     async downloadFile(endpoint: string, destinationPath: string): Promise<void> {
+        const context = this.contextManager.getCurrentContext();
         const url = this.resolveUrl(endpoint);
 
-        CSReporter.info(`Downloading file from ${url} to: ${destinationPath}`);
+        // Get query parameters from context if they were set
+        const queryParams = context?.getVariable('queryParams') || {};
+
+        // Build the URL with query parameters
+        let fullUrl = url;
+        if (Object.keys(queryParams).length > 0) {
+            const queryString = new URLSearchParams(queryParams).toString();
+            fullUrl = `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+        }
+
+        CSReporter.info(`Downloading file from ${fullUrl} to: ${destinationPath}`);
 
         await this.apiClient.getHttpClient().downloadFile(
-            url,
+            fullUrl,
             destinationPath,
             undefined,
             (progress: number) => {
