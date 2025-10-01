@@ -1,0 +1,4401 @@
+package com.qaf.framework.stepdefs;
+
+import static org.testng.Assert.*;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.sql.CallableStatement;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
+
+import org.apache.commons.io.IOUtils;
+import org.everit.json.schema.Schema;
+import org.everit.json.schema.loader.SchemaLoader;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.json.JSONTokener;
+
+import com.qaf.framework.config.ApiConfig;
+import com.qaf.framework.service.GenericApiService;
+import com.qaf.framework.util.ApiResponse;
+import com.qaf.framework.util.TestContextManager;
+import com.qaf.framework.util.ApiClientUtil;
+import com.qmetry.qaf.automation.core.ConfigurationManager;
+import com.qmetry.qaf.automation.step.QAFTestStep;
+import com.qmetry.qaf.automation.util.Reporter;
+import com.qmetry.qaf.automation.util.MessageTypes;
+
+/**
+ * Generic step definitions for API testing.
+ * Provides a comprehensive set of steps for testing any API.
+ */
+public class GenericApiSteps {
+    
+    private static final org.apache.commons.logging.Log logger = org.apache.commons.logging.LogFactory.getLog(GenericApiSteps.class);
+    private static final String CURRENT_API_SERVICE_KEY = "current.api.service";
+    private static final String STORED_RESPONSES_KEY = "stored.responses";
+    
+    //--------------------------------------------------------------------------------
+    // Setup Steps
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Sets up testing for a specific API.
+     * 
+     * @param apiName the API name as defined in ApiConfig
+     */
+    @QAFTestStep(description = "I am testing the {apiName} API")
+    public void setupApiTest(String apiName) {
+        String endpoint = ApiConfig.getEndpoint(apiName);
+        if (endpoint == null) {
+            throw new IllegalArgumentException("Unknown API name: " + apiName);
+        }
+        
+        TestContextManager.setCurrentApi(apiName, endpoint);
+        Reporter.log("Set up for testing the " + apiName + " API at endpoint: " + endpoint, MessageTypes.Info);
+    }
+    
+    /**
+     * Sets the API endpoint directly.
+     * 
+     * @param endpoint the API endpoint to test
+     */
+    @QAFTestStep(description = "I set the API endpoint to {endpoint}")
+    public void setApiEndpoint(String endpoint) {
+        logger.info("Setting API endpoint to: " + endpoint);
+        TestContextManager.setCurrentApi("Custom", endpoint);
+        Reporter.log("API endpoint set to: " + endpoint, MessageTypes.Info);
+    }
+    
+    /**
+     * Sets a value in the test data map.
+     * 
+     * @param key the key
+     * @param value the value
+     */
+    @QAFTestStep(description = "I set test data {key} to {value}")
+    public void setTestDataValue(String key, String value) {
+        Object processedValue = value;
+        
+        // Try to convert to number if possible
+        try {
+            if (value.contains(".")) {
+                processedValue = Double.parseDouble(value);
+            } else {
+                processedValue = Integer.parseInt(value);
+            }
+        } catch (NumberFormatException e) {
+            // Keep as string if not a valid number
+            // For booleans
+            if (value.equalsIgnoreCase("true")) {
+                processedValue = Boolean.TRUE;
+            } else if (value.equalsIgnoreCase("false")) {
+                processedValue = Boolean.FALSE;
+            }
+        }
+        
+        TestContextManager.setTestData(key, processedValue);
+        Reporter.log("Set test data: " + key + " = " + processedValue, MessageTypes.Info);
+    }
+    
+    /**
+     * Sets multiple values in the test data map.
+     * 
+     * @param data map of key-value pairs
+     */
+    @QAFTestStep(description = "I set test data {data}")
+    public void setTestDataValues(Map<String, String> data) {
+        for (Map.Entry<String, String> entry : data.entrySet()) {
+            setTestDataValue(entry.getKey(), entry.getValue());
+        }
+        Reporter.log("Set multiple test data values: " + data, MessageTypes.Info);
+    }
+    
+    /**
+     * Clears all test data.
+     */
+    @QAFTestStep(description = "I clear all test data")
+    public void clearAllTestData() {
+        TestContextManager.clearTestData();
+        Reporter.log("Cleared all test data", MessageTypes.Info);
+    }
+    
+    //--------------------------------------------------------------------------------
+    // Request Steps
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Sends a request to the current API endpoint with a payload file.
+     * 
+     * @param method the HTTP method (GET, POST, PUT, DELETE, PATCH)
+     * @param payloadFile the payload file name
+     */
+    @QAFTestStep(description = "I send a {method} request with payload file {payloadFile}")
+    public void sendRequestWithPayloadFile(String method, String payloadFile) {
+        String endpoint = TestContextManager.getCurrentApiEndpoint();
+        if (endpoint == null) {
+            throw new IllegalStateException("No API has been set up. Use 'I am testing the {apiName} API' first.");
+        }
+        
+        try {
+            // Get the test data for variable substitution
+            Map<String, Object> testData = TestContextManager.getTestData();
+            
+            // Ensure messageId is present if not specified for POST/PUT requests
+            if (!testData.containsKey("messageId") && 
+                (method.equalsIgnoreCase("POST") || method.equalsIgnoreCase("PUT"))) {
+                String messageId = ApiClientUtil.generateMessageId();
+                testData.put("messageId", messageId);
+                logger.info("Generated messageId: " + messageId);
+            }
+            
+            ApiResponse response = GenericApiService.sendRequestWithPayloadFile(endpoint, method, payloadFile, null);
+            
+            // Store the response
+            TestContextManager.setLastApiResponse(response);
+            
+            Reporter.log(method.toUpperCase() + " request sent successfully", MessageTypes.Info);
+            Reporter.log("Response status: " + response.getStatusCode(), MessageTypes.Info);
+            Reporter.log("Response body: " + response.getResponseBody(), MessageTypes.Info);
+            
+        } catch (Exception e) {
+            logger.error("Error sending API request: " + e.getMessage(), e);
+            Reporter.log("Error sending API request: " + e.getMessage(), MessageTypes.Fail);
+            throw e;
+        }
+    }
+    
+    /**
+     * Sends a request to a named API with a payload file.
+     * 
+     * @param method the HTTP method (GET, POST, PUT, DELETE, PATCH)
+     * @param apiName the API name as defined in ApiConfig
+     * @param payloadFile the payload file name
+     */
+    @QAFTestStep(description = "I send a {method} request to {apiName} API with payload file {payloadFile}")
+    public void sendRequestToNamedApiWithPayloadFile(String method, String apiName, String payloadFile) {
+        String endpoint = ApiConfig.getEndpoint(apiName);
+        if (endpoint == null) {
+            throw new IllegalArgumentException("Unknown API name: " + apiName);
+        }
+        
+        try {
+            // Get the test data for variable substitution
+            Map<String, Object> testData = TestContextManager.getTestData();
+            
+            // Ensure messageId is present if not specified for POST/PUT requests
+            if (!testData.containsKey("messageId") && 
+                (method.equalsIgnoreCase("POST") || method.equalsIgnoreCase("PUT"))) {
+                String messageId = ApiClientUtil.generateMessageId();
+                testData.put("messageId", messageId);
+                logger.info("Generated messageId: " + messageId);
+            }
+            
+            ApiResponse response = GenericApiService.sendRequestWithPayloadFile(endpoint, method, payloadFile, null);
+            
+            // Store the response
+            TestContextManager.setLastApiResponse(response);
+            
+            Reporter.log(method.toUpperCase() + " request sent successfully to " + apiName + " API", MessageTypes.Info);
+            Reporter.log("Response status: " + response.getStatusCode(), MessageTypes.Info);
+            Reporter.log("Response body: " + response.getResponseBody(), MessageTypes.Info);
+            
+        } catch (Exception e) {
+            logger.error("Error sending API request: " + e.getMessage(), e);
+            Reporter.log("Error sending API request: " + e.getMessage(), MessageTypes.Fail);
+            throw e;
+        }
+    }
+    
+    /**
+     * Sends a request to a specific endpoint with a payload file.
+     * 
+     * @param method the HTTP method (GET, POST, PUT, DELETE, PATCH)
+     * @param endpoint the API endpoint
+     * @param payloadFile the payload file name
+     */
+    @QAFTestStep(description = "I send a {method} request to {endpoint} with payload file {payloadFile}")
+    public void sendRequestToEndpointWithPayloadFile(String method, String endpoint, String payloadFile) {
+        try {
+            // Get the test data for variable substitution
+            Map<String, Object> testData = TestContextManager.getTestData();
+            
+            // Ensure messageId is present if not specified for POST/PUT requests
+            if (!testData.containsKey("messageId") && 
+                (method.equalsIgnoreCase("POST") || method.equalsIgnoreCase("PUT"))) {
+                String messageId = ApiClientUtil.generateMessageId();
+                testData.put("messageId", messageId);
+                logger.info("Generated messageId: " + messageId);
+            }
+            
+            ApiResponse response = GenericApiService.sendRequestWithPayloadFile(endpoint, method, payloadFile, null);
+            
+            // Store the response
+            TestContextManager.setLastApiResponse(response);
+            
+            Reporter.log(method.toUpperCase() + " request sent successfully to " + endpoint, MessageTypes.Info);
+            Reporter.log("Response status: " + response.getStatusCode(), MessageTypes.Info);
+            Reporter.log("Response body: " + response.getResponseBody(), MessageTypes.Info);
+            
+        } catch (Exception e) {
+            logger.error("Error sending API request: " + e.getMessage(), e);
+            Reporter.log("Error sending API request: " + e.getMessage(), MessageTypes.Fail);
+            throw e;
+        }
+    }
+    
+    /**
+     * Sends a request with raw payload.
+     * 
+     * @param method the HTTP method (GET, POST, PUT, DELETE, PATCH)
+     * @param payload the raw payload
+     */
+    @QAFTestStep(description = "I send a {method} request with payload: {payload}")
+    public void sendRequestWithRawPayload(String method, String payload) {
+        String endpoint = TestContextManager.getCurrentApiEndpoint();
+        if (endpoint == null) {
+            throw new IllegalStateException("No API has been set up. Use 'I am testing the {apiName} API' first.");
+        }
+        
+        try {
+            // Process template variables in the payload
+            payload = processTemplateText(payload);
+            
+            ApiResponse response = GenericApiService.sendRequest(endpoint, method, payload, null);
+            
+            // Store the response
+            TestContextManager.setLastApiResponse(response);
+            
+            Reporter.log(method.toUpperCase() + " request sent successfully", MessageTypes.Info);
+            Reporter.log("Response status: " + response.getStatusCode(), MessageTypes.Info);
+            Reporter.log("Response body: " + response.getResponseBody(), MessageTypes.Info);
+            
+        } catch (Exception e) {
+            logger.error("Error sending API request: " + e.getMessage(), e);
+            Reporter.log("Error sending API request: " + e.getMessage(), MessageTypes.Fail);
+            throw e;
+        }
+    }
+    
+    //--------------------------------------------------------------------------------
+    // Basic Validation Steps
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Verifies the response status code.
+     * 
+     * @param expectedStatus the expected status code
+     */
+    @QAFTestStep(description = "the response status code should be {expectedStatus}")
+    public void verifyStatusCode(int expectedStatus) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        int actualStatus = response.getStatusCode();
+        Reporter.log("Verifying status code: expected=" + expectedStatus + ", actual=" + actualStatus, MessageTypes.Info);
+        assertEquals(actualStatus, expectedStatus, "Response status code mismatch");
+    }
+    
+    /**
+     * Verifies the response is successful (2xx status code).
+     */
+    @QAFTestStep(description = "the response should be successful")
+    public void verifyResponseSuccessful() {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        boolean successful = response.isSuccessful();
+        Reporter.log("Verifying response is successful: " + successful, MessageTypes.Info);
+        assertTrue(successful, "Response is not successful. Status code: " + response.getStatusCode());
+    }
+    
+    /**
+     * Verifies the response contains a field.
+     * 
+     * @param field the field name to check
+     */
+    @QAFTestStep(description = "the response should contain field {field}")
+    public void verifyResponseContainsField(String field) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        boolean hasField = response.hasJsonField(field);
+        Reporter.log("Verifying response contains field '" + field + "': " + hasField, hasField ? MessageTypes.Pass : MessageTypes.Fail);
+        assertTrue(hasField, "Response does not contain field: " + field);
+    }
+    
+    /**
+     * Verifies a response field has a specific value.
+     * 
+     * @param field the field name
+     * @param expectedValue the expected value
+     */
+    @QAFTestStep(description = "the response field {field} should be {expectedValue}")
+    public void verifyResponseFieldValue(String field, String expectedValue) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        String actualValue = response.getValueFromJson(field);
+        Reporter.log("Verifying field '" + field + "': expected=" + expectedValue + ", actual=" + actualValue, MessageTypes.Info);
+        
+        if (actualValue == null) {
+            Reporter.log("Field '" + field + "' not found in response", MessageTypes.Fail);
+            Assert.fail("Field not found in response: " + field);
+            return;
+        }
+        
+        boolean matches = isValueEqual(expectedValue, actualValue);
+        Reporter.log("Field '" + field + "' value " + (matches ? "matches" : "does not match") + " expected value", 
+                    matches ? MessageTypes.Pass : MessageTypes.Fail);
+        assertTrue(matches, "Field value mismatch for: " + field + " - Expected: " + expectedValue + ", Actual: " + actualValue);
+    }
+    
+    /**
+     * Verifies a response field contains a substring.
+     * 
+     * @param field the field name
+     * @param expectedText the expected substring
+     */
+    @QAFTestStep(description = "the response field {field} should contain {expectedText}")
+    public void verifyResponseFieldContains(String field, String expectedText) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        String actualValue = response.getValueFromJson(field);
+        Reporter.log("Verifying field '" + field + "' contains: " + expectedText, MessageTypes.Info);
+        
+        if (actualValue == null) {
+            Reporter.log("Field '" + field + "' not found in response", MessageTypes.Fail);
+            Assert.fail("Field not found in response: " + field);
+            return;
+        }
+        
+        boolean contains = actualValue.contains(expectedText);
+        Reporter.log("Field '" + field + "' " + (contains ? "contains" : "does not contain") + " expected text", 
+                    contains ? MessageTypes.Pass : MessageTypes.Fail);
+        assertTrue(contains, "Field '" + field + "' does not contain: " + expectedText);
+    }
+    
+    /**
+     * Verifies a response field does not contain a substring.
+     * 
+     * @param field the field name
+     * @param unexpectedText the text that should not be present
+     */
+    @QAFTestStep(description = "the response field {field} should not contain {unexpectedText}")
+    public void verifyResponseFieldNotContains(String field, String unexpectedText) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        String actualValue = response.getValueFromJson(field);
+        Reporter.log("Verifying field '" + field + "' does not contain: " + unexpectedText, MessageTypes.Info);
+        
+        if (actualValue == null) {
+            Reporter.log("Field '" + field + "' not found in response", MessageTypes.Fail);
+            Assert.fail("Field not found in response: " + field);
+            return;
+        }
+        
+        boolean contains = actualValue.contains(unexpectedText);
+        Reporter.log("Field '" + field + "' " + (!contains ? "does not contain" : "contains") + " unexpected text", 
+                    !contains ? MessageTypes.Pass : MessageTypes.Fail);
+        assertFalse(contains, "Field '" + field + "' contains unexpected text: " + unexpectedText);
+    }
+    
+    /**
+     * Verifies a validation error message.
+     * 
+     * @param field the field with validation error
+     * @param expectedMessage the expected validation message
+     */
+    @QAFTestStep(description = "the validation error message for {field} should be {expectedMessage}")
+    public void verifyValidationErrorMessage(String field, String expectedMessage) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        String path = "validationErrorMessage." + field;
+        String actualMessage = response.getNestedValue(path);
+        
+        Reporter.log("Verifying validation error for field '" + field + "': expected=" + expectedMessage + ", actual=" + actualMessage, MessageTypes.Info);
+        assertEquals(actualMessage, expectedMessage, "Validation error message mismatch for field: " + field);
+    }
+    
+    /**
+     * Validates that the API response against UI data.
+     * 
+     * @param dataType the data type (e.g., "employeeCalendar", "dealStaticInfo")
+     * @param responsePath the path to the array in the response (e.g., "empCalendarList")
+     */
+    @QAFTestStep(description = "I validate {dataType} API response against UI data using path {responsePath}")
+    public void validateApiResponseAgainstUiData(String dataType, String responsePath) {
+        validateApiResponseAgainstUiDataWithKeys(dataType, responsePath, null);
+    }
+    
+    /**
+     * Validates that the API response against UI data using specific key fields.
+     * 
+     * @param dataType the data type (e.g., "employeeCalendar", "dealStaticInfo")
+     * @param responsePath the path to the array in the response (e.g., "empCalendarList")
+     * @param keyFields comma-separated list of fields to use as keys for matching records
+     */
+    @QAFTestStep(description = "I validate {dataType} API response against UI data using path {responsePath} with keys {keyFields}")
+    public void validateApiResponseAgainstUiDataWithKeys(String dataType, String responsePath, String keyFields) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        List<Map<String, String>> expectedData = TestContextManager.getUiCapturedData(dataType);
+        if (expectedData == null || expectedData.isEmpty()) {
+            Reporter.log("No expected data available for type: " + dataType, MessageTypes.Fail);
+            Assert.fail("No expected data available for type: " + dataType);
+            return;
+        }
+        
+        Reporter.log("Retrieved " + expectedData.size() + " expected records for validation", MessageTypes.Info);
+        
+        JSONObject jsonResponse = response.getJsonObject();
+        if (jsonResponse == null) {
+            Reporter.log("Invalid JSON response", MessageTypes.Fail);
+            Assert.fail("Invalid JSON response");
+            return;
+        }
+        
+        if (!jsonResponse.has(responsePath) || jsonResponse.isNull(responsePath)) {
+            Reporter.log("Response does not contain path: " + responsePath, MessageTypes.Fail);
+            Assert.fail("Response does not contain path: " + responsePath);
+            return;
+        }
+        
+        JSONArray responseArray = jsonResponse.getJSONArray(responsePath);
+        if (responseArray.length() == 0) {
+            Reporter.log(responsePath + " array is empty", MessageTypes.Fail);
+            Assert.fail(responsePath + " array is empty");
+            return;
+        }
+        
+        Reporter.log("Response contains " + responseArray.length() + " records", MessageTypes.Info);
+        
+        // Parse key fields if provided
+        String[] keyFieldArray = null;
+        if (keyFields != null && !keyFields.trim().isEmpty()) {
+            keyFieldArray = keyFields.split(",");
+            for (int i = 0; i < keyFieldArray.length; i++) {
+                keyFieldArray[i] = keyFieldArray[i].trim();
+            }
+            Reporter.log("Using key fields for matching: " + keyFields, MessageTypes.Info);
+        } else {
+            Reporter.log("No key fields specified - using scorecard matching", MessageTypes.Info);
+        }
+        
+        // Convert response array to a list of maps for easier processing
+        List<Map<String, String>> actualRecords = new ArrayList<>();
+        for (int i = 0; i < responseArray.length(); i++) {
+            JSONObject obj = responseArray.getJSONObject(i);
+            Map<String, String> map = new HashMap<>();
+            for (String key : obj.keySet()) {
+                Object value = obj.get(key);
+                map.put(key, value != null ? value.toString() : "null");
+            }
+            actualRecords.add(map);
+        }
+        
+        // Create a copy of actualRecords that we can modify
+        List<Map<String, String>> remainingActualRecords = new ArrayList<>(actualRecords);
+        
+        // Track overall statistics
+        int totalMatches = 0;
+        int totalMismatches = 0;
+        int unmatchedExpectedRecords = 0;
+        boolean validationFailed = false;
+        
+        // Process each map in expected data
+        for (int i = 0; i < expectedData.size(); i++) {
+            Map<String, String> expectedRecord = expectedData.get(i);
+            Reporter.log("\nValidating expected record #" + (i + 1) + ":", MessageTypes.Info);
+            
+            // Find the best matching map in actual data
+            int bestMatchIndex = -1;
+            
+            // If key fields are provided, use them for exact matching
+            if (keyFieldArray != null && keyFieldArray.length > 0) {
+                bestMatchIndex = findExactMatchByKeys(expectedRecord, remainingActualRecords, keyFieldArray);
+            }
+            
+            // If no match found by keys or no keys provided, use scorecard matching
+            if (bestMatchIndex == -1) {
+                bestMatchIndex = findBestMatch(expectedRecord, remainingActualRecords);
+            }
+            
+            if (bestMatchIndex != -1) {
+                Map<String, String> bestMatch = remainingActualRecords.get(bestMatchIndex);
+                
+                // Compare the maps in detail
+                int[] matchResults = compareRecords(expectedRecord, bestMatch, i, "Expected", "Actual");
+                totalMatches += matchResults[0];
+                totalMismatches += matchResults[1];
+                
+                if (matchResults[1] > 0) {
+                    validationFailed = true;
+                }
+                
+                // Remove the matched map to avoid matching it again
+                remainingActualRecords.remove(bestMatchIndex);
+            } else {
+                Reporter.log("No matching record found for expected record #" + (i + 1), MessageTypes.Fail);
+                unmatchedExpectedRecords++;
+                validationFailed = true;
+            }
+        }
+        
+        // Report any unmatched records in actual data
+        if (!remainingActualRecords.isEmpty()) {
+            Reporter.log("\nUnmatched records in response (" + remainingActualRecords.size() + "):", MessageTypes.Info);
+            for (int i = 0; i < Math.min(remainingActualRecords.size(), 3); i++) {
+                Reporter.log("Unmatched record: " + remainingActualRecords.get(i), MessageTypes.Info);
+            }
+            if (remainingActualRecords.size() > 3) {
+                Reporter.log("... and " + (remainingActualRecords.size() - 3) + " more unmatched records", MessageTypes.Info);
+            }
+        }
+        
+        // Overall summary
+        Reporter.log("\nValidation Summary:", MessageTypes.Info);
+        Reporter.log("- Expected records: " + expectedData.size(), MessageTypes.Info);
+        Reporter.log("- Actual records: " + actualRecords.size(), MessageTypes.Info);
+        Reporter.log("- Matched records: " + (expectedData.size() - unmatchedExpectedRecords), MessageTypes.Info);
+        Reporter.log("- Unmatched expected records: " + unmatchedExpectedRecords, MessageTypes.Info);
+        Reporter.log("- Unmatched actual records: " + remainingActualRecords.size(), MessageTypes.Info);
+        Reporter.log("- Matching fields: " + totalMatches, MessageTypes.Info);
+        
+        if (totalMismatches > 0) {
+            Reporter.log("- Mismatched fields: " + totalMismatches, MessageTypes.Fail);
+        } else {
+            Reporter.log("- Mismatched fields: " + totalMismatches, MessageTypes.Pass);
+        }
+        
+        if (validationFailed) {
+            Reporter.log("\nValidation failed. See above for details.", MessageTypes.Fail);
+            Assert.fail("API response validation failed with field mismatches or unmatched records");
+        } else {
+            Reporter.log("\nValidation successful - all expected records matched!", MessageTypes.Pass);
+        }
+    }
+    
+    /**
+     * Prints all test data for debugging.
+     */
+    @QAFTestStep(description = "I print all test data for debugging")
+    public void printAllTestData() {
+        Map<String, Object> data = TestContextManager.getTestData();
+        Reporter.log("=== Current Test Data ===", MessageTypes.Info);
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            Reporter.log(entry.getKey() + " = " + entry.getValue(), MessageTypes.Info);
+        }
+    }
+    
+    /**
+     * Prints the response body for debugging.
+     */
+    @QAFTestStep(description = "I print the response body for debugging")
+    public void printResponseBody() {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            return;
+        }
+        
+        Reporter.log("=== Response Body ===", MessageTypes.Info);
+        Reporter.log(response.getResponseBody(), MessageTypes.Info);
+    }
+    
+    //--------------------------------------------------------------------------------
+    // Database Integration Steps
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Executes a SQL query and stores the result for later validation.
+     * 
+     * @param query the SQL query to execute
+     * @param resultName name to store the result under
+     */
+    @QAFTestStep(description = "I execute SQL query {query} and store result as {resultName}")
+    public void executeSqlQuery(String query, String resultName) {
+        try {
+            // Apply test data variables to query
+            query = processTemplateText(query);
+            
+            Reporter.log("Executing SQL query: " + query, MessageTypes.Info);
+            List<Map<String, Object>> results = executeQuery(query);
+            Reporter.log("Query returned " + results.size() + " rows", MessageTypes.Info);
+            
+            // Store result in test context
+            TestContextManager.setContext("db.query." + resultName, results);
+        } catch (Exception e) {
+            Reporter.log("Error executing SQL query: " + e.getMessage(), MessageTypes.Fail);
+            throw new RuntimeException("Failed to execute SQL query", e);
+        }
+    }
+    
+    /**
+     * Executes a stored procedure and stores the result.
+     * 
+     * @param procedure the stored procedure name
+     * @param parameters map of parameter names to values
+     * @param resultName name to store the result under
+     */
+    @QAFTestStep(description = "I execute stored procedure {procedure} with parameters {parameters} and store result as {resultName}")
+    public void executeStoredProcedure(String procedure, Map<String, Object> parameters, String resultName) {
+        try {
+            Reporter.log("Executing stored procedure: " + procedure, MessageTypes.Info);
+            
+            // Process parameters with test data
+            Map<String, Object> processedParams = new HashMap<>();
+            for (Map.Entry<String, Object> entry : parameters.entrySet()) {
+                if (entry.getValue() instanceof String) {
+                    processedParams.put(entry.getKey(), processTemplateText((String) entry.getValue()));
+                } else {
+                    processedParams.put(entry.getKey(), entry.getValue());
+                }
+            }
+            
+            List<Map<String, Object>> results = executeStoredProc(procedure, processedParams);
+            Reporter.log("Stored procedure returned " + results.size() + " rows", MessageTypes.Info);
+            
+            // Store result in test context
+            TestContextManager.setContext("db.proc." + resultName, results);
+        } catch (Exception e) {
+            Reporter.log("Error executing stored procedure: " + e.getMessage(), MessageTypes.Fail);
+            throw new RuntimeException("Failed to execute stored procedure", e);
+        }
+    }
+    
+    /**
+     * Executes a SQL query and uses the results as test data.
+     * 
+     * @param query the SQL query to execute
+     */
+    @QAFTestStep(description = "I execute SQL query {query} and use results as test data")
+    public void executeSqlQueryAsTestData(String query) {
+        try {
+            // Apply test data variables to query
+            query = processTemplateText(query);
+            
+            Reporter.log("Executing SQL query for test data: " + query, MessageTypes.Info);
+            List<Map<String, Object>> results = executeQuery(query);
+            Reporter.log("Query returned " + results.size() + " rows", MessageTypes.Info);
+            
+            // If no results, nothing to do
+            if (results.isEmpty()) {
+                Reporter.log("Query returned no results, no test data to set", MessageTypes.Warn);
+                return;
+            }
+            
+            // Take the first row and use its columns as test data
+            Map<String, Object> firstRow = results.get(0);
+            for (Map.Entry<String, Object> entry : firstRow.entrySet()) {
+                if (entry.getValue() != null) {
+                    TestContextManager.setTestData(entry.getKey(), entry.getValue());
+                    Reporter.log("Set test data from query: " + entry.getKey() + " = " + entry.getValue(), MessageTypes.Info);
+                }
+            }
+            
+            // Store all results for potential later use
+            TestContextManager.setContext("db.lastQueryResults", results);
+            
+            if (results.size() > 1) {
+                Reporter.log("Query returned multiple rows, only first row used for test data", MessageTypes.Info);
+            }
+        } catch (Exception e) {
+            Reporter.log("Error executing SQL query for test data: " + e.getMessage(), MessageTypes.Fail);
+            throw new RuntimeException("Failed to execute SQL query for test data", e);
+        }
+    }
+    
+    /**
+     * Validates that API response matches a database query result.
+     * The keyField parameter is optional for matching records.
+     * 
+     * @param responseField the response field to validate
+     * @param queryResult the stored query result name
+     * @param keyField the field to use as a key for matching records (optional)
+     */
+    @QAFTestStep(description = "I validate response field {responseField} against SQL query result {queryResult} with key {keyField}")
+    public void validateResponseAgainstQueryResult(String responseField, String queryResult, String keyField) {
+        validateResponseAgainstQueryResultInternal(responseField, queryResult, keyField);
+    }
+    
+    /**
+     * Validates that API response matches a database query result without specifying a key field.
+     * 
+     * @param responseField the response field to validate
+     * @param queryResult the stored query result name
+     */
+    @QAFTestStep(description = "I validate response field {responseField} against SQL query result {queryResult}")
+    public void validateResponseAgainstQueryResultNoKey(String responseField, String queryResult) {
+        validateResponseAgainstQueryResultInternal(responseField, queryResult, null);
+    }
+    
+    /**
+     * Internal implementation of response validation against query result.
+     */
+    private void validateResponseAgainstQueryResultInternal(String responseField, String queryResult, String keyField) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> dbResults = (List<Map<String, Object>>) TestContextManager.getContext("db.query." + queryResult);
+        if (dbResults == null || dbResults.isEmpty()) {
+            Reporter.log("No database results available for key: " + queryResult, MessageTypes.Fail);
+            Assert.fail("No database results available");
+            return;
+        }
+        
+        // Convert DB results to string values for comparison
+        List<Map<String, String>> expectedData = convertDbResultsToStringMaps(dbResults);
+        
+        // Extract the response data
+        JSONObject jsonResponse = response.getJsonObject();
+        if (!jsonResponse.has(responseField)) {
+            Reporter.log("Response does not contain field: " + responseField, MessageTypes.Fail);
+            Assert.fail("Response field not found: " + responseField);
+            return;
+        }
+        
+        JSONArray responseArray;
+        if (jsonResponse.get(responseField) instanceof JSONArray) {
+            responseArray = jsonResponse.getJSONArray(responseField);
+        } else if (jsonResponse.get(responseField) instanceof JSONObject) {
+            // If it's a single object, wrap in array for consistent processing
+            responseArray = new JSONArray();
+            responseArray.put(jsonResponse.getJSONObject(responseField));
+        } else {
+            Reporter.log("Response field is not an array or object: " + responseField, MessageTypes.Fail);
+            Assert.fail("Invalid response field type");
+            return;
+        }
+        
+        // Convert response array to list of maps
+        List<Map<String, String>> actualData = new ArrayList<>();
+        for (int i = 0; i < responseArray.length(); i++) {
+            JSONObject obj = responseArray.getJSONObject(i);
+            Map<String, String> map = new HashMap<>();
+            for (String key : obj.keySet()) {
+                map.put(key, obj.get(key) != null ? obj.get(key).toString() : "null");
+            }
+            actualData.add(map);
+        }
+        
+        // Split key fields if provided
+        String[] keyFields = keyField != null && !keyField.isEmpty() ? keyField.split(",") : null;
+        if (keyFields != null) {
+            for (int i = 0; i < keyFields.length; i++) {
+                keyFields[i] = keyFields[i].trim();
+            }
+        }
+        
+        // Validate the data
+        validateDataSets(expectedData, actualData, keyFields, "Database", "Response");
+    }
+    
+    //--------------------------------------------------------------------------------
+    // Request Chaining Steps
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Extracts a value from the response and stores it as test data.
+     * 
+     * @param responseField the field to extract
+     * @param testDataKey the key to store the value under
+     */
+    @QAFTestStep(description = "I extract response field {responseField} and store as test data {testDataKey}")
+    public void extractResponseField(String responseField, String testDataKey) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        String value = response.getValueFromJson(responseField);
+        if (value == null) {
+            Reporter.log("Response field not found: " + responseField, MessageTypes.Fail);
+            Assert.fail("Response field not found: " + responseField);
+            return;
+        }
+        
+        TestContextManager.setTestData(testDataKey, value);
+        Reporter.log("Extracted response field '" + responseField + "' value '" + value + "' and stored as '" + testDataKey + "'", MessageTypes.Info);
+    }
+    
+    /**
+     * Extracts a value from a nested path in the response and stores it as test data.
+     * 
+     * @param responsePath the path to extract (e.g. "data.pagination.nextPageToken")
+     * @param testDataKey the key to store the value under
+     */
+    @QAFTestStep(description = "I extract value from response path {responsePath} and store as test data {testDataKey}")
+    public void extractResponsePath(String responsePath, String testDataKey) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        String value = response.getNestedValue(responsePath);
+        if (value == null) {
+            Reporter.log("Response path not found: " + responsePath, MessageTypes.Fail);
+            Assert.fail("Response path not found: " + responsePath);
+            return;
+        }
+        
+        TestContextManager.setTestData(testDataKey, value);
+        Reporter.log("Extracted response path '" + responsePath + "' value '" + value + "' and stored as '" + testDataKey + "'", MessageTypes.Info);
+    }
+    
+    /**
+     * Extracts multiple values from response and stores them as test data.
+     * 
+     * @param fieldsToExtract map of response fields to test data keys
+     */
+    @QAFTestStep(description = "I extract response fields {fieldsToExtract} and store as test data")
+    public void extractMultipleResponseFields(Map<String, String> fieldsToExtract) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        for (Map.Entry<String, String> entry : fieldsToExtract.entrySet()) {
+            String responseField = entry.getKey();
+            String testDataKey = entry.getValue();
+            
+            String value = response.getValueFromJson(responseField);
+            if (value != null) {
+                TestContextManager.setTestData(testDataKey, value);
+                Reporter.log("Extracted response field '" + responseField + "' value '" + value + "' and stored as '" + testDataKey + "'", MessageTypes.Info);
+            } else {
+                Reporter.log("Response field not found: " + responseField, MessageTypes.Warn);
+            }
+        }
+    }
+    
+    //--------------------------------------------------------------------------------
+    // Response Storage and Comparison Steps
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Stores the current response for later comparison.
+     * 
+     * @param responseName the name to store the response under
+     */
+    @QAFTestStep(description = "I store current response as {responseName}")
+    public void storeCurrentResponse(String responseName) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        Map<String, ApiResponse> storedResponses = getStoredResponsesMap();
+        storedResponses.put(responseName, response);
+        
+        Reporter.log("Stored current response as '" + responseName + "'", MessageTypes.Info);
+    }
+    
+    /**
+     * Validates that the current response matches a previously stored response.
+     * 
+     * @param responseName the name of the stored response
+     */
+    @QAFTestStep(description = "I validate current response matches stored response {responseName}")
+    public void validateAgainstStoredResponse(String responseName) {
+        ApiResponse currentResponse = TestContextManager.getLastApiResponse();
+        if (currentResponse == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        Map<String, ApiResponse> storedResponses = getStoredResponsesMap();
+        ApiResponse storedResponse = storedResponses.get(responseName);
+        
+        if (storedResponse == null) {
+            Reporter.log("No stored response found with name: " + responseName, MessageTypes.Fail);
+            Assert.fail("No stored response found with name: " + responseName);
+            return;
+        }
+        
+        // Compare the response bodies
+        String currentBody = currentResponse.getResponseBody();
+        String storedBody = storedResponse.getResponseBody();
+        
+        if (currentBody.equals(storedBody)) {
+            Reporter.log("Current response matches stored response '" + responseName + "'", MessageTypes.Pass);
+        } else {
+            Reporter.log("Current response does not match stored response '" + responseName + "'", MessageTypes.Fail);
+            Reporter.log("Expected: " + storedBody, MessageTypes.Info);
+            Reporter.log("Actual: " + currentBody, MessageTypes.Info);
+            Assert.fail("Current response does not match stored response '" + responseName + "'");
+        }
+    }
+    
+    //--------------------------------------------------------------------------------
+    // Advanced Validation Steps
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Validates that the response matches a JSON schema.
+     * 
+     * @param schemaFileName the JSON schema file name
+     */
+    @QAFTestStep(description = "I validate response against JSON schema {schemaFileName}")
+    public void validateResponseSchema(String schemaFileName) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        try {
+            String schemaDir = ConfigurationManager.getBundle().getString("schema.dir", "resources/schemas");
+            String path = schemaDir + "/" + schemaFileName;
+            
+            File schemaFile = new File(path);
+            if (!schemaFile.exists()) {
+                Reporter.log("Schema file not found: " + path, MessageTypes.Fail);
+                Assert.fail("Schema file not found: " + path);
+                return;
+            }
+            
+            // Load schema
+            JSONObject rawSchema = new JSONObject(new JSONTokener(new FileInputStream(schemaFile)));
+            Schema schema = SchemaLoader.load(rawSchema);
+            
+            // Parse response body
+            JSONObject responseJson;
+            try {
+                responseJson = new JSONObject(response.getResponseBody());
+            } catch (Exception e) {
+                Reporter.log("Response is not a valid JSON object", MessageTypes.Fail);
+                Assert.fail("Response is not a valid JSON object");
+                return;
+            }
+            
+            // Validate
+            try {
+                schema.validate(responseJson);
+                Reporter.log("Response validates against schema '" + schemaFileName + "'", MessageTypes.Pass);
+            } catch (Exception e) {
+                Reporter.log("Schema validation failed: " + e.getMessage(), MessageTypes.Fail);
+                Assert.fail("Schema validation failed: " + e.getMessage());
+            }
+        } catch (Exception e) {
+            Reporter.log("Error during schema validation: " + e.getMessage(), MessageTypes.Fail);
+            throw new RuntimeException("Schema validation error", e);
+        }
+    }
+    
+    /**
+     * Validates that a field matches a regular expression pattern.
+     * 
+     * @param field the field to check
+     * @param pattern the regular expression pattern
+     */
+    @QAFTestStep(description = "the response field {field} should match pattern {pattern}")
+    public void fieldShouldMatchPattern(String field, String pattern) {
+        ApiResponse response = TestContextManager.getLastApiResponse();
+        if (response == null) {
+            Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+            Assert.fail("No API response available");
+            return;
+        }
+        
+        String value = response.getValueFromJson(field);
+        if (value == null) {
+            Reporter.log("Response field not found: " + field, MessageTypes.Fail);
+            Assert.fail("Response field not found");
+            return;
+        }
+        
+        boolean matches = Pattern.matches(pattern, value);
+        
+        if (matches) {
+            Reporter.log("Field '" + field + "' with value '" + value + "' matches pattern '" + pattern + "'", MessageTypes.Pass);
+        } else {
+            Reporter.log("Field '" + field + "' with value '" + value + "' does not match pattern '" + pattern + "'", MessageTypes.Fail);
+            Assert.fail("Field does not match pattern");
+        }
+    }
+    
+    //--------------------------------------------------------------------------------
+    // Conditional and Flow Control Steps
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Polls an API endpoint until a condition is met or timeout is reached.
+     * 
+     * @param apiName the API name
+     * @param intervalSeconds the polling interval in seconds
+     * @param maxTimeMinutes the maximum polling time in minutes
+     * @param field the field to check
+     * @param expectedStatus the expected status to wait for
+     */
+    @QAFTestStep(description = "I poll {apiName} API every {intervalSeconds} seconds for maximum {maxTimeMinutes} minutes until field {field} is {expectedStatus}")
+    public void pollApiUntilCondition(String apiName, int intervalSeconds, int maxTimeMinutes, String field, String expectedStatus) {
+        LocalDateTime startTime = LocalDateTime.now();
+        LocalDateTime endTime = startTime.plusMinutes(maxTimeMinutes);
+        boolean conditionMet = false;
+        
+        String endpoint = ApiConfig.getEndpoint(apiName);
+        if (endpoint == null) {
+            Reporter.log("Unknown API name: " + apiName, MessageTypes.Fail);
+            Assert.fail("Unknown API name");
+            return;
+        }
+        
+        // Store original API endpoint to restore later
+        String originalEndpoint = TestContextManager.getCurrentApiEndpoint();
+        
+        try {
+            // Set up for polling
+            TestContextManager.setCurrentApi(apiName, endpoint);
+            
+            Reporter.log("Polling " + apiName + " API until field '" + field + "' is '" + expectedStatus + "' (timeout: " + maxTimeMinutes + " minutes)", MessageTypes.Info);
+            
+            int pollCount = 0;
+            while (LocalDateTime.now().isBefore(endTime) && !conditionMet) {
+                pollCount++;
+                
+                // Send API request
+                try {
+                    Reporter.log("Poll attempt #" + pollCount, MessageTypes.Info);
+                    
+                    // Assuming the payload file uses the API name
+                    String payloadFile = apiName.toLowerCase().replace(" ", "-") + "-poll.json";
+                    ApiResponse response = GenericApiService.sendRequestWithPayloadFile(endpoint, "GET", payloadFile, null);
+                    TestContextManager.setLastApiResponse(response);
+                    
+                    // Check condition
+                    String actualValue = response.getValueFromJson(field);
+                    
+                    if (expectedStatus.equals(actualValue)) {
+                        conditionMet = true;
+                        Reporter.log("Condition met: field '" + field + "' is '" + expectedStatus + "' after " + pollCount + " attempts", MessageTypes.Pass);
+                    } else {
+                        Reporter.log("Current value of field '" + field + "' is '" + actualValue + "', waiting for '" + expectedStatus + "'", MessageTypes.Info);
+                    }
+                } catch (Exception e) {
+                    Reporter.log("Error during polling attempt: " + e.getMessage(), MessageTypes.Info);
+                }
+                
+                // Wait for next interval if not done
+                if (!conditionMet && LocalDateTime.now().isBefore(endTime)) {
+                    Thread.sleep(intervalSeconds * 1000);
+                }
+            }
+            
+            if (!conditionMet) {
+                Reporter.log("Timeout reached. Condition not met after " + maxTimeMinutes + " minutes", MessageTypes.Fail);
+                Assert.fail("Polling timeout reached");
+            }
+        } catch (Exception e) {
+            Reporter.log("Error during polling: " + e.getMessage(), MessageTypes.Fail);
+            throw new RuntimeException("Polling failed", e);
+        } finally {
+            // Restore original API endpoint if there was one
+            if (originalEndpoint != null) {
+                TestContextManager.setCurrentApi("Original", originalEndpoint);
+            }
+        }
+    }
+    
+    //--------------------------------------------------------------------------------
+    // Helper Methods
+    //--------------------------------------------------------------------------------
+    
+    /**
+     * Helper method to execute a SQL query and return results.
+     */
+    private List<Map<String, Object>> executeQuery(String query) throws Exception {
+        List<Map<String, Object>> results = new ArrayList<>();
+        Connection conn = null;
+        Statement stmt = null;
+        ResultSet rs = null;
+        
+        try {
+            conn = getDatabaseConnection();
+            stmt = conn.createStatement();
+            rs = stmt.executeQuery(query);
+            
+            // Get column names
+            int columnCount = rs.getMetaData().getColumnCount();
+            String[] columnNames = new String[columnCount];
+            for (int i = 1; i <= columnCount; i++) {
+                columnNames[i-1] = rs.getMetaData().getColumnName(i);
+            }
+            
+            // Process rows
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (String columnName : columnNames) {
+                    row.put(columnName, rs.getObject(columnName));
+                }
+                results.add(row);
+            }
+        } finally {
+            if (rs != null) try { rs.close(); } catch (Exception e) { /* ignore */ }
+            if (stmt != null) try { stmt.close(); } catch (Exception e) { /* ignore */ }
+            if (conn != null) try { conn.close(); } catch (Exception e) { /* ignore */ }
+        }
+        
+        return results;
+    }
+    
+    /**
+     * Helper method to execute a stored procedure and return results.
+     */
+    private List<Map<String, Object>> executeStoredProc(String procedure, Map<String, Object> parameters) throws Exception {
+        List<Map<String, Object>> results = new ArrayList<>();
+        Connection conn = null;
+        CallableStatement stmt = null;
+        ResultSet rs = null;
+        
+        try {
+            conn = getDatabaseConnection();
+            
+            // Prepare call based on parameters
+            StringBuilder callBuilder = new StringBuilder("{call " + procedure + "(");
+            for (int i = 0; i < parameters.size(); i++) {
+                callBuilder.append("?");
+                if (i < parameters.size() - 1) {
+                    callBuilder.append(",");
+                }
+            }
+            callBuilder.append(")}");
+            
+            stmt = conn.prepareCall(callBuilder.toString());
+            
+            // Set parameters
+            int paramIndex = 1;
+            for (Object value : parameters.values()) {
+                stmt.setObject(paramIndex++, value);
+            }
+            
+            // Execute and process results
+            rs = stmt.executeQuery();
+            
+            // Get column names
+            int columnCount = rs.getMetaData().getColumnCount();
+            String[] columnNames = new String[columnCount];
+            for (int i = 1; i <= columnCount; i++) {
+                columnNames[i-1] = rs.getMetaData().getColumnName(i);
+            }
+            
+            // Process rows
+            while (rs.next()) {
+                Map<String, Object> row = new HashMap<>();
+                for (String columnName : columnNames) {
+                    row.put(columnName, rs.getObject(columnName));
+                }
+                results.add(row);
+            }
+        } finally {
+            if (rs != null) try { rs.close(); } catch (Exception e) { /* ignore */ }
+            if (stmt != null) try { stmt.close(); } catch (Exception e) { /* ignore */ }
+            if (conn != null) try { conn.close(); } catch (Exception e) { /* ignore */ }
+        }
+        
+        return results;
+    }
+    
+    /**
+     * Helper method to get a database connection.
+     */
+    private Connection getDatabaseConnection() throws Exception {
+        String url = ConfigurationManager.getBundle().getString("db.url");
+        String username = ConfigurationManager.getBundle().getString("db.username");
+        String password = ConfigurationManager.getBundle().getString("db.password");
+        
+        return DriverManager.getConnection(url, username, password);
+    }
+    
+    /**
+     * Helper method to convert database results to string maps.
+     */
+    private List<Map<String, String>> convertDbResultsToStringMaps(List<Map<String, Object>> dbResults) {
+        List<Map<String, String>> result = new ArrayList<>();
+        
+        for (Map<String, Object> row : dbResults) {
+            Map<String, String> stringMap = new HashMap<>();
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                stringMap.put(entry.getKey(), entry.getValue() != null ? entry.getValue().toString() : "null");
+            }
+            result.add(stringMap);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Helper method to process template text with test data.
+     */
+    private String processTemplateText(String template) {
+        if (template == null) {
+            return null;
+        }
+        
+        Map<String, Object> testData = TestContextManager.getTestData();
+        return ApiClientUtil.processTemplate(template, testData);
+    }
+    
+    /**
+     * Helper method to get stored responses map.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, ApiResponse> getStoredResponsesMap() {
+        Map<String, ApiResponse> storedResponses = 
+            (Map<String, ApiResponse>) TestContextManager.getContext(STORED_RESPONSES_KEY);
+        
+        if (storedResponses == null) {
+            storedResponses = new HashMap<>();
+            TestContextManager.setContext(STORED_RESPONSES_KEY, storedResponses);
+        }
+        
+        return storedResponses;
+    }
+    
+    /**
+     * Helper method to validate two datasets against each other.
+     */
+    private void validateDataSets(List<Map<String, String>> expectedData, List<Map<String, String>> actualData, 
+                                 String[] keyFields, String expectedSource, String actualSource) {
+        // Create a copy of actualData that we can modify
+        List<Map<String, String>> remainingActualRecords = new ArrayList<>(actualData);
+        
+        // Track overall statistics
+        int totalMatches = 0;
+        int totalMismatches = 0;
+        int unmatchedExpectedRecords = 0;
+        boolean validationFailed = false;
+        
+        // Process each map in expected data
+        for (int i = 0; i < expectedData.size(); i++) {
+            Map<String, String> expectedRecord = expectedData.get(i);
+            Reporter.log("\nValidating expected record #" + (i + 1) + ":", MessageTypes.Info);
+            
+            // Find the best matching map in actual data
+            int bestMatchIndex = -1;
+            
+            // If key fields are provided, use them for exact matching
+            if (keyFields != null && keyFields.length > 0) {
+                bestMatchIndex = findExactMatchByKeys(expectedRecord, remainingActualRecords, keyFields);
+            }
+            
+            // If no match found by keys or no keys provided, use scorecard matching
+            if (bestMatchIndex == -1) {
+                bestMatchIndex = findBestMatch(expectedRecord, remainingActualRecords);
+            }
+            
+            if (bestMatchIndex != -1) {
+                Map<String, String> bestMatch = remainingActualRecords.get(bestMatchIndex);
+                
+                // Compare the maps in detail
+                int[] matchResults = compareRecords(expectedRecord, bestMatch, i, expectedSource, actualSource);
+                totalMatches += matchResults[0];
+                totalMismatches += matchResults[1];
+                
+                if (matchResults[1] > 0) {
+                    validationFailed = true;
+                }
+                
+                // Remove the matched map to avoid matching it again
+                remainingActualRecords.remove(bestMatchIndex);
+            } else {
+                Reporter.log("No matching record found for expected record #" + (i + 1), MessageTypes.Fail);
+                unmatchedExpectedRecords++;
+                validationFailed = true;
+            }
+        }
+        
+        // Report any unmatched records in actual data
+        if (!remainingActualRecords.isEmpty()) {
+            Reporter.log("\nUnmatched records in " + actualSource + " (" + remainingActualRecords.size() + "):", MessageTypes.Info);
+            for (int i = 0; i < Math.min(remainingActualRecords.size(), 3); i++) {
+                Reporter.log("Unmatched record: " + remainingActualRecords.get(i), MessageTypes.Info);
+            }
+            if (remainingActualRecords.size() > 3) {
+                Reporter.log("... and " + (remainingActualRecords.size() - 3) + " more unmatched records", MessageTypes.Info);
+            }
+        }
+        
+        // Overall summary
+        Reporter.log("\nValidation Summary:", MessageTypes.Info);
+        Reporter.log("- Expected records: " + expectedData.size(), MessageTypes.Info);
+        Reporter.log("- Actual records: " + actualData.size(), MessageTypes.Info);
+        Reporter.log("- Matched records: " + (expectedData.size() - unmatchedExpectedRecords), MessageTypes.Info);
+        Reporter.log("- Unmatched expected records: " + unmatchedExpectedRecords, MessageTypes.Info);
+        Reporter.log("- Unmatched actual records: " + remainingActualRecords.size(), MessageTypes.Info);
+        Reporter.log("- Matching fields: " + totalMatches, MessageTypes.Info);
+        
+        if (totalMismatches > 0) {
+            Reporter.log("- Mismatched fields: " + totalMismatches, MessageTypes.Fail);
+        } else {
+            Reporter.log("- Mismatched fields: " + totalMismatches, MessageTypes.Pass);
+        }
+        
+        if (validationFailed) {
+            Reporter.log("\nValidation failed. See above for details.", MessageTypes.Fail);
+            Assert.fail("Data validation failed with field mismatches or unmatched records");
+        } else {
+            Reporter.log("\nValidation successful - all expected records matched!", MessageTypes.Pass);
+        }
+    }
+    
+    /**
+     * Helper method to compare two records and report differences.
+     * Returns an array with [matchCount, mismatchCount]
+     */
+    private int[] compareRecords(Map<String, String> expectedRecord, Map<String, String> actualRecord, 
+                              int recordIndex, String expectedSource, String actualSource) {
+        int matchCount = 0;
+        int mismatchCount = 0;
+        Set<String> processedKeys = new HashSet<>();
+        
+        Reporter.log("Record details:", MessageTypes.Info);
+        
+        // Check all keys in expected record
+        for (String key : expectedRecord.keySet()) {
+            processedKeys.add(key);
+            
+            String expectedValue = expectedRecord.get(key);
+            
+            if (actualRecord.containsKey(key)) {
+                String actualValue = actualRecord.get(key);
+                
+                if (isValueEqual(expectedValue, actualValue)) {
+                    matchCount++;
+                    Reporter.log("✓ Field '" + key + "' matches: '" + expectedValue + "'", MessageTypes.Pass);
+                } else {
+                    mismatchCount++;
+                    Reporter.log("✗ Field '" + key + "' mismatch - " + expectedSource + ": '" + expectedValue + 
+                               "', " + actualSource + ": '" + actualValue + "'", MessageTypes.Fail);
+                }
+            } else {
+                Reporter.log("! Field '" + key + "' exists only in " + expectedSource + " with value '" + 
+                           expectedValue + "'", MessageTypes.Fail);
+                mismatchCount++;
+            }
+        }
+        
+        // Check for keys in actual record that aren't in expected record
+        for (String key : actualRecord.keySet()) {
+            if (!processedKeys.contains(key)) {
+                Reporter.log("! Field '" + key + "' exists only in " + actualSource + " with value '" + 
+                           actualRecord.get(key) + "'", MessageTypes.Info);
+            }
+        }
+        
+        return new int[] { matchCount, mismatchCount };
+    }
+    
+    /**
+     * Helper method to check if two values are equal, treating null and blank as equal.
+     */
+    private boolean isValueEqual(String value1, String value2) {
+        // If both are null or blank, consider them equal
+        if (isNullOrBlank(value1) && isNullOrBlank(value2)) {
+            return true;
+        }
+        
+        // If one is null and the other isn't, they're not equal
+        if (value1 == null || value2 == null) {
+            return false;
+        }
+        
+        // Compare the trimmed values
+        return value1.trim().equals(value2.trim());
+    }
+    
+    /**
+     * Helper method to check if a string is null, empty, or blank.
+     */
+    private boolean isNullOrBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+    
+    /**
+     * Helper method to find an exact match by key fields.
+     */
+    private int findExactMatchByKeys(Map<String, String> targetMap, List<Map<String, String>> mapList, String[] keyFields) {
+        for (int i = 0; i < mapList.size(); i++) {
+            Map<String, String> candidateMap = mapList.get(i);
+            boolean allKeysMatch = true;
+            
+            for (String keyField : keyFields) {
+                // Skip if target doesn't have the key
+                if (!targetMap.containsKey(keyField)) {
+                    allKeysMatch = false;
+                    break;
+                }
+                
+                // Skip if candidate doesn't have the key
+                if (!candidateMap.containsKey(keyField)) {
+                    allKeysMatch = false;
+                    break;
+                }
+                
+                // Compare values, treating null and blank as equal
+                String targetValue = targetMap.get(keyField);
+                String candidateValue = candidateMap.get(keyField);
+                
+                if (!isValueEqual(targetValue, candidateValue)) {
+                    allKeysMatch = false;
+                    break;
+                }
+            }
+            
+            if (allKeysMatch) {
+                return i;
+            }
+        }
+        
+        return -1;
+    }
+    
+    /**
+     * Helper method to find the best match based on scoring.
+     */
+    private int findBestMatch(Map<String, String> targetMap, List<Map<String, String>> mapList) {
+        if (mapList.isEmpty()) {
+            return -1;
+        }
+        
+        int bestMatchIndex = -1;
+        int highestScore = -1;
+        
+        for (int i = 0; i < mapList.size(); i++) {
+            Map<String, String> candidateMap = mapList.get(i);
+            int score = calculateMatchScore(targetMap, candidateMap);
+            
+            if (score > highestScore) {
+                highestScore = score;
+                bestMatchIndex = i;
+            }
+        }
+        
+        // Only consider it a match if score is above threshold
+        return highestScore > 0 ? bestMatchIndex : -1;
+    }
+    
+    /**
+     * Helper method to calculate a match score between two maps.
+     */
+    private int calculateMatchScore(Map<String, String> map1, Map<String, String> map2) {
+        int score = 0;
+        
+        // Check all keys in map1
+        for (String key : map1.keySet()) {
+            if (map2.containsKey(key)) {
+                String value1 = map1.get(key);
+                String value2 = map2.get(key);
+                
+                if (isValueEqual(value1, value2)) {
+                    // Matching key-value pair
+                    score += 10;
+                } else {
+                    // Key exists but values differ
+                    score += 2;
+                }
+            }
+        }
+        
+        return score;
+    }
+	
+	
+	/**
+ * Executes a SQL query with parameters and stores the result for comparison.
+ * Parameters are provided as comma-separated values that will replace placeholders in the query.
+ * 
+ * @param query the SQL query with ? placeholders for parameters
+ * @param parameters comma-separated parameters to inject into the query
+ * @param resultVariable name of the variable to store the query result
+ */
+@QAFTestStep(description = "I execute SQL query {query} with parameters {parameters} and store result in {resultVariable}")
+public void executeSqlQueryWithParametersAndStore(String query, String parameters, String resultVariable) {
+    logger.info("Executing SQL query with parameters and storing result in variable: " + resultVariable);
+    
+    try {
+        // Parse the parameters
+        String[] paramValues = parameters.split("\\s*,\\s*");
+        List<Object> queryParams = new ArrayList<>();
+        
+        // Process each parameter
+        for (String param : paramValues) {
+            String trimmedParam = param.trim();
+            
+            // Check if the parameter is a reference to test data
+            if (trimmedParam.startsWith("${") && trimmedParam.endsWith("}")) {
+                String dataKey = trimmedParam.substring(2, trimmedParam.length() - 1);
+                queryParams.add(TestContextManager.getTestDataValue(dataKey));
+                logger.info("Parameter resolved from test data: " + dataKey + " = " + 
+                           TestContextManager.getTestDataValue(dataKey));
+            } else {
+                // Direct value
+                queryParams.add(trimmedParam);
+                logger.info("Parameter direct value: " + trimmedParam);
+            }
+        }
+        
+        // Execute the query using the framework utility method
+        List<Map<String, Object>> queryResults = SQLServerDBUtil.getResultsSet(query, queryParams);
+        logger.info("Query executed successfully. Result size: " + queryResults.size());
+        
+        // Store the result in test context
+        TestContextManager.setContext(resultVariable, queryResults);
+        Reporter.log("SQL query executed with parameters and result stored in variable: " + resultVariable);
+        
+    } catch (Exception e) {
+        logger.error("Error executing SQL query with parameters: " + e.getMessage(), e);
+        Reporter.log("Error executing SQL query with parameters: " + e.getMessage());
+        throw new RuntimeException("Failed to execute SQL query with parameters: " + e.getMessage(), e);
+    }
+}
+
+/**
+ * Executes a SQL query and validates the result against a specific response field.
+ * This is a convenience method that combines query execution and validation.
+ * 
+ * @param query SQL query to execute
+ * @param parameters comma-separated query parameters
+ * @param responsePath JSON path to the response field to validate
+ * @param mappingConfig field mapping configuration
+ */
+@QAFTestStep(description = "I validate response path {responsePath} against SQL query {query} with parameters {parameters} using mapping {mappingConfig}")
+public void validateResponsePathAgainstSqlQuery(String responsePath, String query, String parameters, String mappingConfig) {
+    logger.info("Executing SQL query and validating response path: " + responsePath);
+    
+    try {
+        // Create a unique variable name for this query result
+        String resultVariable = "sqlQueryResult_" + System.currentTimeMillis();
+        
+        // Execute the query and store the result
+        executeSqlQueryWithParametersAndStore(query, parameters, resultVariable);
+        
+        // Validate the response against the query result
+        validateResponsePathAgainstQueryResults(responsePath, resultVariable, mappingConfig);
+        
+    } catch (Exception e) {
+        logger.error("Error validating response against SQL query: " + e.getMessage(), e);
+        Reporter.log("Error validating response against SQL query: " + e.getMessage());
+        throw new RuntimeException("Failed to validate response against SQL query: " + e.getMessage(), e);
+    }
+}
+
+/**
+ * Validates a response field against database query results using a flexible mapping approach.
+ * Supports nested JSON paths and complex data structures.
+ * 
+ * @param responsePath JSON path to the field in the response (supports dot notation and array indexing)
+ * @param queryResultVar variable name containing the database query results
+ * @param mappingConfig configuration for mapping DB columns to response fields (optional)
+ */
+@QAFTestStep(description = "I validate response path {responsePath} against query results {queryResultVar} with mapping {mappingConfig}")
+public void validateResponsePathAgainstQueryResults(String responsePath, String queryResultVar, String mappingConfig) {
+    logger.info("Validating response path '" + responsePath + "' against query results in variable '" + queryResultVar + "'");
+    
+    ApiResponse response = getResponse();
+    if (response == null) {
+        fail("No response available. Make sure to send a request first.");
+        return;
+    }
+    
+    JSONObject jsonResponse = response.getJsonObject();
+    if (jsonResponse == null) {
+        fail("Invalid JSON response");
+        return;
+    }
+    
+    try {
+        // Get the query results from context
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> queryResults = 
+            (List<Map<String, Object>>) TestContextManager.getContext(queryResultVar);
+        
+        if (queryResults == null || queryResults.isEmpty()) {
+            Reporter.log("Query results not found or empty in variable: " + queryResultVar);
+            fail("Query results not found or empty in variable: " + queryResultVar);
+            return;
+        }
+        
+        // Parse the mapping configuration
+        Map<String, String> fieldMappings = parseFieldMappings(mappingConfig);
+        
+        // Extract the data from the response at the specified path
+        Object responseData = extractFromJsonPath(jsonResponse, responsePath);
+        if (responseData == null) {
+            Reporter.log("Data not found in response at path: " + responsePath);
+            fail("Data not found in response at path: " + responsePath);
+            return;
+        }
+        
+        // Convert response data to a structure we can compare with DB results
+        List<Map<String, Object>> responseDataList = normalizeResponseData(responseData);
+        
+        // Perform deep comparison with mapping
+        ComparisonResult result = compareDataWithMapping(queryResults, responseDataList, fieldMappings);
+        
+        if (result.success) {
+            Reporter.log("✓ Response data at path '" + responsePath + "' matches query results");
+            for (String message : result.matchDetails) {
+                Reporter.log("  - " + message);
+            }
+        } else {
+            Reporter.log("✗ Response data at path '" + responsePath + "' does not match query results");
+            for (String error : result.errors) {
+                Reporter.log("  - " + error);
+            }
+            fail("Response data does not match query results: " + result.errors.get(0));
+        }
+        
+    } catch (Exception e) {
+        logger.error("Error validating response against query results: " + e.getMessage(), e);
+        Reporter.log("Error validating response against query results: " + e.getMessage());
+        fail("Error validating response against query results: " + e.getMessage());
+    }
+}
+
+/**
+ * Validates a specific response field directly against a SQL query.
+ * This is a convenience method for simpler validations.
+ * 
+ * @param responseField JSON path to the response field
+ * @param query SQL query to execute
+ * @param parameters query parameters
+ * @param dbField database field to compare with
+ */
+@QAFTestStep(description = "I validate response field {responseField} against SQL query {query} with parameters {parameters} field {dbField}")
+public void validateResponseFieldAgainstSqlQuery(String responseField, String query, String parameters, String dbField) {
+    logger.info("Validating response field '" + responseField + "' against SQL query result field: " + dbField);
+    
+    try {
+        // Create a unique variable name for this query result
+        String resultVariable = "sqlQueryResult_" + System.currentTimeMillis();
+        
+        // Execute the query and store the result
+        executeSqlQueryWithParametersAndStore(query, parameters, resultVariable);
+        
+        // Validate the response field against the DB field
+        validateResponseFieldAgainstQueryField(responseField, resultVariable, dbField);
+        
+    } catch (Exception e) {
+        logger.error("Error validating response field against SQL query: " + e.getMessage(), e);
+        Reporter.log("Error validating response field against SQL query: " + e.getMessage());
+        throw new RuntimeException("Failed to validate response field against SQL query: " + e.getMessage(), e);
+    }
+}
+
+/**
+ * Compares a specific response field against a specific DB query result field.
+ * This is a simpler alternative to the more comprehensive mapping validation.
+ * 
+ * @param responseField the JSON path to the response field
+ * @param queryResultVar the variable containing the query results
+ * @param dbField the database field to compare with
+ */
+@QAFTestStep(description = "I validate response field {responseField} against query result {queryResultVar} field {dbField}")
+public void validateResponseFieldAgainstQueryField(String responseField, String queryResultVar, String dbField) {
+    logger.info("Validating response field '" + responseField + "' against DB field '" + dbField + 
+               "' from query results in variable '" + queryResultVar + "'");
+    
+    ApiResponse response = getResponse();
+    if (response == null) {
+        fail("No response available. Make sure to send a request first.");
+        return;
+    }
+    
+    try {
+        // Get the response value
+        Object responseValue = response.getNestedValue(responseField);
+        if (responseValue == null) {
+            Reporter.log("Response field '" + responseField + "' not found or null.");
+            fail("Response field '" + responseField + "' not found or null.");
+            return;
+        }
+        
+        // Get the query results from context
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> queryResults = 
+            (List<Map<String, Object>>) TestContextManager.getContext(queryResultVar);
+        
+        if (queryResults == null || queryResults.isEmpty()) {
+            Reporter.log("Query results not found or empty in variable: " + queryResultVar);
+            fail("Query results not found or empty in variable: " + queryResultVar);
+            return;
+        }
+        
+        // Get the first DB record value for the field
+        Map<String, Object> firstDbRecord = queryResults.get(0);
+        if (!firstDbRecord.containsKey(dbField)) {
+            Reporter.log("DB field '" + dbField + "' not found in query results.");
+            fail("DB field '" + dbField + "' not found in query results.");
+            return;
+        }
+        
+        Object dbValue = firstDbRecord.get(dbField);
+        
+        // Compare the values
+        boolean matches = valuesAreEqual(responseValue, dbValue);
+        
+        if (matches) {
+            Reporter.log("✓ Response field '" + responseField + "' value '" + responseValue + 
+                        "' matches DB field '" + dbField + "' value '" + dbValue + "'");
+        } else {
+            Reporter.log("✗ Response field '" + responseField + "' value '" + responseValue + 
+                        "' does not match DB field '" + dbField + "' value '" + dbValue + "'");
+            fail("Response field value does not match DB field value");
+        }
+        
+    } catch (Exception e) {
+        logger.error("Error comparing response field with DB field: " + e.getMessage(), e);
+        Reporter.log("Error comparing response field with DB field: " + e.getMessage());
+        fail("Error comparing response field with DB field: " + e.getMessage());
+    }
+}
+
+/**
+ * Result class for data comparisons.
+ */
+private static class ComparisonResult {
+    boolean success = true; // Default to true, set to false on errors
+    List<String> errors = new ArrayList<>();
+    List<String> matchDetails = new ArrayList<>();
+}
+
+/**
+ * Parses the field mapping configuration string into a map.
+ * Format: "dbColumn1:responsePath1,dbColumn2:responsePath2,..."
+ * 
+ * @param mappingConfig the mapping configuration string
+ * @return map of database column names to response field paths
+ */
+private Map<String, String> parseFieldMappings(String mappingConfig) {
+    Map<String, String> mappings = new HashMap<>();
+    
+    if (mappingConfig == null || mappingConfig.trim().isEmpty()) {
+        return mappings; // Return empty map for default mapping
+    }
+    
+    String[] mappingPairs = mappingConfig.split("\\s*,\\s*");
+    for (String pair : mappingPairs) {
+        String[] parts = pair.split("\\s*:\\s*");
+        if (parts.length == 2) {
+            mappings.put(parts[0].trim(), parts[1].trim());
+        }
+    }
+    
+    return mappings;
+}
+
+/**
+ * Extracts data from a JSON object using a path expression.
+ * Supports dot notation and array indexing (e.g., "empInfo[0].empDetails[*].deptId").
+ * Special handling for [*] to get all array elements.
+ * 
+ * @param json the JSON object to extract from
+ * @param path the path to extract
+ * @return the extracted data
+ */
+private Object extractFromJsonPath(JSONObject json, String path) {
+    if (path == null || path.isEmpty()) {
+        return json;
+    }
+    
+    String[] segments = path.split("\\.");
+    Object current = json;
+    
+    for (String segment : segments) {
+        if (current == null) {
+            return null;
+        }
+        
+        // Handle array access
+        if (segment.contains("[") && segment.endsWith("]")) {
+            String fieldName = segment.substring(0, segment.indexOf('['));
+            String indexStr = segment.substring(segment.indexOf('[') + 1, segment.length() - 1);
+            
+            // Get the array field first
+            if (current instanceof JSONObject) {
+                JSONObject jsonObj = (JSONObject) current;
+                if (!jsonObj.has(fieldName)) {
+                    return null;
+                }
+                current = jsonObj.get(fieldName);
+            } else {
+                return null;
+            }
+            
+            // Then handle array indexing
+            if (current instanceof JSONArray) {
+                JSONArray array = (JSONArray) current;
+                
+                // Handle wildcard [*] to get all array items
+                if (indexStr.equals("*")) {
+                    return array;
+                }
+                
+                // Handle numeric index
+                try {
+                    int index = Integer.parseInt(indexStr);
+                    if (index >= 0 && index < array.length()) {
+                        current = array.get(index);
+                    } else {
+                        return null;
+                    }
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            } else {
+                return null;
+            }
+        } 
+        // Simple field access
+        else if (current instanceof JSONObject) {
+            JSONObject jsonObj = (JSONObject) current;
+            if (!jsonObj.has(segment)) {
+                return null;
+            }
+            current = jsonObj.get(segment);
+        } else {
+            return null;
+        }
+    }
+    
+    return current;
+}
+
+/**
+ * Normalizes response data into a consistent format for comparison.
+ * Handles various data structures: single object, array, nested arrays, etc.
+ * 
+ * @param data the response data to normalize
+ * @return normalized list of maps for comparison
+ */
+private List<Map<String, Object>> normalizeResponseData(Object data) {
+    List<Map<String, Object>> result = new ArrayList<>();
+    
+    if (data instanceof JSONArray) {
+        JSONArray array = (JSONArray) data;
+        for (int i = 0; i < array.length(); i++) {
+            Object item = array.get(i);
+            if (item instanceof JSONObject) {
+                result.add(flattenJsonObject((JSONObject) item, null));
+            } else if (item instanceof JSONArray) {
+                result.addAll(normalizeResponseData(item));
+            }
+        }
+    } else if (data instanceof JSONObject) {
+        result.add(flattenJsonObject((JSONObject) data, null));
+    }
+    
+    return result;
+}
+
+/**
+ * Flattens a nested JSON object into a single map with dot notation for nested paths.
+ * Makes complex nested structures comparable with flat DB results.
+ * 
+ * @param json the JSON object to flatten
+ * @param prefix the prefix for keys (used in recursion)
+ * @return flattened map of the JSON object
+ */
+private Map<String, Object> flattenJsonObject(JSONObject json, String prefix) {
+    Map<String, Object> result = new HashMap<>();
+    
+    for (String key : json.keySet()) {
+        Object value = json.get(key);
+        String fullKey = prefix != null ? prefix + "." + key : key;
+        
+        if (value instanceof JSONObject) {
+            result.putAll(flattenJsonObject((JSONObject) value, fullKey));
+        } else if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            
+            // Add the array itself with the current key
+            result.put(fullKey, array);
+            
+            // Also add flattened representation of array items
+            for (int i = 0; i < array.length(); i++) {
+                Object item = array.get(i);
+                if (item instanceof JSONObject) {
+                    result.putAll(flattenJsonObject((JSONObject) item, fullKey + "[" + i + "]"));
+                }
+            }
+        } else {
+            result.put(fullKey, value);
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * Compares database query results with response data using provided field mappings.
+ * 
+ * @param queryResults the query results from the database
+ * @param responseData the normalized response data
+ * @param fieldMappings the mappings from DB columns to response fields
+ * @return comparison result with success flag and details
+ */
+private ComparisonResult compareDataWithMapping(
+        List<Map<String, Object>> queryResults, 
+        List<Map<String, Object>> responseData,
+        Map<String, String> fieldMappings) {
+    
+    ComparisonResult result = new ComparisonResult();
+    
+    // If no mapping provided, try to match fields by name (case-insensitive)
+    if (fieldMappings.isEmpty()) {
+        // Generate mappings automatically based on field names
+        fieldMappings = generateAutomaticMappings(queryResults, responseData);
+        result.matchDetails.add("Using auto-generated field mappings: " + fieldMappings);
+    }
+    
+    // No mappings could be found
+    if (fieldMappings.isEmpty()) {
+        result.success = false;
+        result.errors.add("No field mappings available. Cannot compare data.");
+        return result;
+    }
+    
+    // Keep track of matched DB records
+    Set<Integer> matchedDbRecords = new HashSet<>();
+    
+    // For each response record, find a matching DB record
+    for (int i = 0; i < responseData.size(); i++) {
+        Map<String, Object> responseRecord = responseData.get(i);
+        boolean foundMatch = false;
+        
+        // Record identifier for logs
+        String respRecordId = "Response record #" + (i+1);
+        if (responseRecord.containsKey("empId")) {
+            respRecordId += " (empId: " + responseRecord.get("empId") + ")";
+        }
+        
+        // Try to match with each DB record
+        for (int j = 0; j < queryResults.size(); j++) {
+            // Skip already matched DB records
+            if (matchedDbRecords.contains(j)) {
+                continue;
+            }
+            
+            Map<String, Object> dbRecord = queryResults.get(j);
+            boolean recordMatches = true;
+            List<String> fieldMismatches = new ArrayList<>();
+            
+            // DB record identifier for logs
+            String dbRecordId = "DB record #" + (j+1);
+            if (dbRecord.containsKey("emp_id")) {
+                dbRecordId += " (emp_id: " + dbRecord.get("emp_id") + ")";
+            }
+            
+            // Check each mapped field
+            for (Map.Entry<String, String> mapping : fieldMappings.entrySet()) {
+                String dbColumn = mapping.getKey();
+                String responsePath = mapping.getValue();
+                
+                if (!dbRecord.containsKey(dbColumn)) {
+                    fieldMismatches.add("DB column '" + dbColumn + "' not found in DB record");
+                    recordMatches = false;
+                    continue;
+                }
+                
+                if (!responseRecord.containsKey(responsePath)) {
+                    fieldMismatches.add("Response field '" + responsePath + "' not found in response record");
+                    recordMatches = false;
+                    continue;
+                }
+                
+                Object dbValue = dbRecord.get(dbColumn);
+                Object responseValue = responseRecord.get(responsePath);
+                
+                if (!valuesAreEqual(dbValue, responseValue)) {
+                    fieldMismatches.add("Value mismatch for mapping '" + dbColumn + "' -> '" + responsePath + 
+                                       "': DB='" + dbValue + "', Response='" + responseValue + "'");
+                    recordMatches = false;
+                }
+            }
+            
+            if (recordMatches) {
+                matchedDbRecords.add(j);
+                foundMatch = true;
+                result.matchDetails.add(respRecordId + " matches with " + dbRecordId);
+                break;
+            } else if (logger.isDebugEnabled()) {
+                // Log mismatches at debug level
+                logger.debug(respRecordId + " does not match " + dbRecordId + ":");
+                for (String mismatch : fieldMismatches) {
+                    logger.debug("  - " + mismatch);
+                }
+            }
+        }
+        
+        if (!foundMatch) {
+            result.success = false;
+            result.errors.add(respRecordId + " has no matching DB record");
+        }
+    }
+    
+    // Check for unmatched DB records
+    if (matchedDbRecords.size() < queryResults.size()) {
+        int unmatchedCount = queryResults.size() - matchedDbRecords.size();
+        result.matchDetails.add(unmatchedCount + " DB records did not match any response records (this may be expected)");
+    }
+    
+    // Success is already set based on whether all response records were matched
+    return result;
+}
+
+/**
+ * Generates automatic field mappings by trying to match DB column names to response field names.
+ * 
+ * @param queryResults the query results from the database
+ * @param responseData the normalized response data
+ * @return map of database column names to response field paths
+ */
+private Map<String, String> generateAutomaticMappings(
+        List<Map<String, Object>> queryResults, 
+        List<Map<String, Object>> responseData) {
+    
+    Map<String, String> mappings = new HashMap<>();
+    
+    if (queryResults.isEmpty() || responseData.isEmpty()) {
+        return mappings;
+    }
+    
+    // Get sample records for mapping
+    Map<String, Object> dbSample = queryResults.get(0);
+    Map<String, Object> responseSample = responseData.get(0);
+    
+    // Map of DB column names in lowercase for case-insensitive matching
+    Map<String, String> dbColumnLowerToActual = new HashMap<>();
+    for (String column : dbSample.keySet()) {
+        dbColumnLowerToActual.put(column.toLowerCase(), column);
+    }
+    
+    // For each response field, try to find a matching DB column
+    for (String responseField : responseSample.keySet()) {
+        // Try direct match first
+        String responseName = getSimpleName(responseField);
+        String responseNameLower = responseName.toLowerCase();
+        
+        // First try exact match
+        if (dbColumnLowerToActual.containsKey(responseNameLower)) {
+            mappings.put(dbColumnLowerToActual.get(responseNameLower), responseField);
+            continue;
+        }
+        
+        // Try common naming patterns
+        String dbStyleName = camelToSnakeCase(responseName);
+        if (dbColumnLowerToActual.containsKey(dbStyleName)) {
+            mappings.put(dbColumnLowerToActual.get(dbStyleName), responseField);
+            continue;
+        }
+        
+        // Try with emp_ prefix (common in employee tables)
+        String withEmpPrefix = "emp_" + dbStyleName;
+        if (dbColumnLowerToActual.containsKey(withEmpPrefix)) {
+            mappings.put(dbColumnLowerToActual.get(withEmpPrefix), responseField);
+            continue;
+        }
+        
+        // Try other common mappings
+        if (responseNameLower.equals("empid") || responseNameLower.equals("employeeid")) {
+            if (dbColumnLowerToActual.containsKey("emp_id")) {
+                mappings.put(dbColumnLowerToActual.get("emp_id"), responseField);
+            }
+        } else if (responseNameLower.equals("deptid") || responseNameLower.equals("departmentid")) {
+            if (dbColumnLowerToActual.containsKey("dept_id")) {
+                mappings.put(dbColumnLowerToActual.get("dept_id"), responseField);
+            }
+        } else if (responseNameLower.equals("empname") || responseNameLower.equals("employeename")) {
+            if (dbColumnLowerToActual.containsKey("emp_name")) {
+                mappings.put(dbColumnLowerToActual.get("emp_name"), responseField);
+            }
+        } else if (responseNameLower.equals("deptname") || responseNameLower.equals("departmentname")) {
+            if (dbColumnLowerToActual.containsKey("dept_name")) {
+                mappings.put(dbColumnLowerToActual.get("dept_name"), responseField);
+            }
+        }
+    }
+    
+    return mappings;
+}
+
+/**
+ * Gets the simple name from a potentially nested path.
+ * Example: "empDetails[0].deptId" becomes "deptId"
+ * 
+ * @param path the potentially nested path
+ * @return the simple field name
+ */
+private String getSimpleName(String path) {
+    int lastDot = path.lastIndexOf('.');
+    return lastDot >= 0 ? path.substring(lastDot + 1) : path;
+}
+
+/**
+ * Converts camelCase to snake_case.
+ * Example: "empName" becomes "emp_name"
+ * 
+ * @param camelCase the camelCase string
+ * @return the snake_case string
+ */
+private String camelToSnakeCase(String camelCase) {
+    // Handle special case of ID at the end
+    camelCase = camelCase.replaceAll("([a-z])ID$", "$1_id");
+    
+    // Regular conversion
+    String regex = "([a-z])([A-Z])";
+    String replacement = "$1_$2";
+    return camelCase.replaceAll(regex, replacement).toLowerCase();
+}
+
+/**
+ * Checks if two values are equal, with special handling for different types.
+ * 
+ * @param value1 first value
+ * @param value2 second value
+ * @return true if the values are considered equal
+ */
+private boolean valuesAreEqual(Object value1, Object value2) {
+    // Handle null values
+    if (value1 == null && value2 == null) {
+        return true;
+    }
+    if (value1 == null || value2 == null) {
+        return false;
+    }
+    
+    // Handle numeric types
+    if (value1 instanceof Number && value2 instanceof Number) {
+        double num1 = ((Number) value1).doubleValue();
+        double num2 = ((Number) value2).doubleValue();
+        
+        // Use a small epsilon for floating point comparison
+        return Math.abs(num1 - num2) < 0.0001;
+    }
+    
+    // Handle string case insensitive comparison
+    if (value1 instanceof String && value2 instanceof String) {
+        return ((String) value1).equalsIgnoreCase((String) value2);
+    }
+    
+    // Handle numeric strings
+    if ((value1 instanceof String && value2 instanceof Number) ||
+        (value1 instanceof Number && value2 instanceof String)) {
+        try {
+            double num1 = value1 instanceof Number ? 
+                           ((Number) value1).doubleValue() : 
+                           Double.parseDouble((String) value1);
+            
+            double num2 = value2 instanceof Number ? 
+                           ((Number) value2).doubleValue() : 
+                           Double.parseDouble((String) value2);
+            
+            return Math.abs(num1 - num2) < 0.0001;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+    
+    // Default string comparison
+    return value1.toString().equalsIgnoreCase(value2.toString());
+}
+
+/**
+ * Verifies that field values from UI data exist in the API response.
+ * 
+ * @param uiDataVariable the variable name containing UI data as List<Map<String, String>>
+ * @param uiFieldName the field name in the UI data map
+ * @param responsePath JSON path to the field values in the response
+ */
+@QAFTestStep(description = "I verify all {uiFieldName} values from UI data {uiDataVariable} exist in response path {responsePath}")
+public void verifyUIValuesExistInResponse(String uiFieldName, String uiDataVariable, String responsePath) {
+    logger.info("Verifying " + uiFieldName + " values from UI data exist in response at " + responsePath);
+    
+    ApiResponse response = TestContextManager.getLastApiResponse();
+    if (response == null) {
+        Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+        Assert.fail("No API response available");
+        return;
+    }
+    
+    @SuppressWarnings("unchecked")
+    List<Map<String, String>> uiData = 
+        (List<Map<String, String>>) TestContextManager.getContext(uiDataVariable);
+    
+    if (uiData == null || uiData.isEmpty()) {
+        Reporter.log("No UI data available for key: " + uiDataVariable, MessageTypes.Fail);
+        Assert.fail("No UI data available");
+        return;
+    }
+    
+    // Extract values from UI data
+    Set<String> uiValues = new HashSet<>();
+    for (Map<String, String> record : uiData) {
+        if (record.containsKey(uiFieldName)) {
+            String value = record.get(uiFieldName);
+            if (value != null && !value.trim().isEmpty()) {
+                uiValues.add(value);
+            }
+        }
+    }
+    
+    if (uiValues.isEmpty()) {
+        Reporter.log("No " + uiFieldName + " values found in UI data", MessageTypes.Warn);
+        return;
+    }
+    
+    // Extract all values from the response at the specified path
+    Set<String> responseValues = extractAllValuesFromPath(response.getJsonObject(), responsePath);
+    
+    // Find values in UI data but missing from response
+    Set<String> missingValues = new HashSet<>(uiValues);
+    missingValues.removeAll(responseValues);
+    
+    // Find values in response but not in UI data
+    Set<String> extraValues = new HashSet<>(responseValues);
+    extraValues.removeAll(uiValues);
+    
+    // Log results
+    Reporter.log("Field comparison summary for '" + uiFieldName + "':");
+    Reporter.log("- UI data values: " + uiValues.size());
+    Reporter.log("- Response values: " + responseValues.size());
+    
+    if (missingValues.isEmpty()) {
+        Reporter.log("✓ All UI data values exist in the response");
+    } else {
+        Reporter.log("✗ " + missingValues.size() + " UI data values are missing from the response:", 
+                    MessageTypes.Fail);
+        
+        for (String value : missingValues) {
+            Reporter.log("  - Missing: " + value);
+        }
+        
+        Assert.fail("UI data values missing from response");
+    }
+    
+    if (!extraValues.isEmpty()) {
+        Reporter.log("! Additional values found in response but not in UI data: " + extraValues.size());
+        if (extraValues.size() <= 10) {
+            for (String value : extraValues) {
+                Reporter.log("  - Extra: " + value);
+            }
+        } else {
+            Reporter.log("  (Too many additional values to display)");
+        }
+    }
+}
+
+/**
+ * Compares full data sets between UI captured data and response data.
+ * Uses the existing validateResponseAgainstQueryResult method for comparison.
+ * 
+ * @param uiDataVariable the variable name containing UI data as List<Map<String, String>>
+ * @param responsePath JSON path to the data in the response
+ * @param keyField optional key field for matching records
+ */
+@QAFTestStep(description = "I compare UI data {uiDataVariable} with response {responsePath} using key {keyField}")
+public void compareUIDataWithResponseData(String uiDataVariable, String responsePath, String keyField) {
+    logger.info("Comparing UI data with response data");
+    
+    // Get the UI data from context
+    @SuppressWarnings("unchecked")
+    List<Map<String, String>> uiData = 
+        (List<Map<String, String>>) TestContextManager.getContext(uiDataVariable);
+    
+    if (uiData == null || uiData.isEmpty()) {
+        Reporter.log("No UI data available for key: " + uiDataVariable, MessageTypes.Fail);
+        Assert.fail("No UI data available");
+        return;
+    }
+    
+    // Store UI data in the expected format for validateResponseAgainstQueryResult
+    // Create a unique key for temporary storage
+    String tempQueryResultKey = "ui.data." + System.currentTimeMillis();
+    TestContextManager.setContext("db.query." + tempQueryResultKey, uiData);
+    
+    // Extract data if we need to handle a complex path
+    ApiResponse response = TestContextManager.getLastApiResponse();
+    if (response == null) {
+        Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+        Assert.fail("No API response available");
+        return;
+    }
+    
+    JSONObject jsonResponse = response.getJsonObject();
+    
+    // Check if we need to handle a nested path
+    if (responsePath.contains(".") || responsePath.contains("[")) {
+        // Extract data from nested path
+        Object responseData = extractFromJsonPath(jsonResponse, responsePath);
+        if (responseData == null) {
+            Reporter.log("Response data not found at path: " + responsePath, MessageTypes.Fail);
+            Assert.fail("Response data not found at path: " + responsePath);
+            return;
+        }
+        
+        // Create a temporary field in the JSON object to hold the extracted data
+        String tempField = "__extracted_data_" + System.currentTimeMillis();
+        
+        // Add it to the response for regular processing
+        if (responseData instanceof JSONArray) {
+            jsonResponse.put(tempField, responseData);
+        } else if (responseData instanceof JSONObject) {
+            JSONArray array = new JSONArray();
+            array.put(responseData);
+            jsonResponse.put(tempField, array);
+        } else {
+            Reporter.log("Data at path '" + responsePath + "' is not a valid JSON object or array", MessageTypes.Fail);
+            Assert.fail("Invalid data type at path: " + responsePath);
+            return;
+        }
+        
+        // Use the temporary field for validation
+        validateResponseAgainstQueryResult(tempField, tempQueryResultKey, keyField);
+        
+        // Clean up
+        jsonResponse.remove(tempField);
+    } else {
+        // Simple field, use directly
+        validateResponseAgainstQueryResult(responsePath, tempQueryResultKey, keyField);
+    }
+    
+    // Clean up
+    TestContextManager.removeContext("db.query." + tempQueryResultKey);
+}
+
+/**
+ * Enhanced method to extract data from a JSON object using a path expression.
+ * Properly handles nested array paths like "empInfo[*].empDetails".
+ * 
+ * @param json the JSON object to extract from
+ * @param path the path to extract
+ * @return the extracted data
+ */
+private Object extractFromJsonPath(JSONObject json, String path) {
+    if (path == null || path.isEmpty()) {
+        return json;
+    }
+    
+    // Handle special case for paths with wildcards and multiple segments
+    if (path.contains("[*].")) {
+        String[] parts = path.split("\\[\\*\\]\\.");
+        if (parts.length >= 2) {
+            String arrayPath = parts[0];
+            String nestedField = parts[1];
+            
+            // Get the array at the first path segment
+            Object arrayObj = extractSimplePath(json, arrayPath);
+            if (arrayObj instanceof JSONArray) {
+                JSONArray sourceArray = (JSONArray) arrayObj;
+                JSONArray resultArray = new JSONArray();
+                
+                // For each item in the array, extract the nested field
+                for (int i = 0; i < sourceArray.length(); i++) {
+                    if (sourceArray.get(i) instanceof JSONObject) {
+                        JSONObject item = sourceArray.getJSONObject(i);
+                        
+                        // If the nested field is itself an array, add all its items to our result
+                        if (item.has(nestedField) && item.get(nestedField) instanceof JSONArray) {
+                            JSONArray nestedArray = item.getJSONArray(nestedField);
+                            for (int j = 0; j < nestedArray.length(); j++) {
+                                resultArray.put(nestedArray.get(j));
+                            }
+                        }
+                        // Otherwise if it's a direct field, add it
+                        else if (item.has(nestedField)) {
+                            resultArray.put(item.get(nestedField));
+                        }
+                    }
+                }
+                
+                return resultArray;
+            }
+        }
+    }
+    
+    // Handle standard paths
+    return extractSimplePath(json, path);
+}
+
+/**
+ * Extracts a value from a JSON object using a simple path expression.
+ * 
+ * @param json the JSON object to extract from
+ * @param path the path to extract (no wildcards)
+ * @return the extracted data
+ */
+private Object extractSimplePath(JSONObject json, String path) {
+    String[] segments = path.split("\\.");
+    Object current = json;
+    
+    for (String segment : segments) {
+        if (current == null) {
+            return null;
+        }
+        
+        // Handle array access
+        if (segment.contains("[") && segment.endsWith("]")) {
+            String fieldName = segment.substring(0, segment.indexOf('['));
+            String indexStr = segment.substring(segment.indexOf('[') + 1, segment.length() - 1);
+            
+            // Get the array field first
+            if (current instanceof JSONObject) {
+                JSONObject jsonObj = (JSONObject) current;
+                if (!jsonObj.has(fieldName)) {
+                    return null;
+                }
+                current = jsonObj.get(fieldName);
+            } else {
+                return null;
+            }
+            
+            // Then handle array indexing
+            if (current instanceof JSONArray) {
+                JSONArray array = (JSONArray) current;
+                
+                // Handle numeric index
+                try {
+                    int index = Integer.parseInt(indexStr);
+                    if (index >= 0 && index < array.length()) {
+                        current = array.get(index);
+                    } else {
+                        return null;
+                    }
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            } else {
+                return null;
+            }
+        } 
+        // Simple field access
+        else if (current instanceof JSONObject) {
+            JSONObject jsonObj = (JSONObject) current;
+            if (!jsonObj.has(segment)) {
+                return null;
+            }
+            current = jsonObj.get(segment);
+        } else {
+            return null;
+        }
+    }
+    
+    return current;
+}
+
+/**
+ * Enhanced method to extract data from a JSON object using a path expression.
+ * Properly handles nested array paths like "empInfo[*].empDetails".
+ * 
+ * @param json the JSON object to extract from
+ * @param path the path to extract
+ * @return the extracted data
+ */
+private Object extractFromJsonPath(JSONObject json, String path) {
+    if (path == null || path.isEmpty()) {
+        return json;
+    }
+    
+    // Handle special case for paths with wildcards and multiple segments
+    if (path.contains("[*].")) {
+        String[] parts = path.split("\\[\\*\\]\\.");
+        if (parts.length >= 2) {
+            String arrayPath = parts[0];
+            String nestedField = parts[1];
+            
+            // Get the array at the first path segment
+            Object arrayObj = extractSimplePath(json, arrayPath);
+            if (arrayObj instanceof JSONArray) {
+                JSONArray sourceArray = (JSONArray) arrayObj;
+                JSONArray resultArray = new JSONArray();
+                
+                // For each item in the array, extract the nested field
+                for (int i = 0; i < sourceArray.length(); i++) {
+                    if (sourceArray.get(i) instanceof JSONObject) {
+                        JSONObject item = sourceArray.getJSONObject(i);
+                        
+                        // If the nested field is itself an array, add all its items to our result
+                        if (item.has(nestedField) && item.get(nestedField) instanceof JSONArray) {
+                            JSONArray nestedArray = item.getJSONArray(nestedField);
+                            for (int j = 0; j < nestedArray.length(); j++) {
+                                resultArray.put(nestedArray.get(j));
+                            }
+                        }
+                        // Otherwise if it's a direct field, add it
+                        else if (item.has(nestedField)) {
+                            resultArray.put(item.get(nestedField));
+                        }
+                    }
+                }
+                
+                return resultArray;
+            }
+        }
+    }
+    
+    // Handle standard paths
+    return extractSimplePath(json, path);
+}
+
+/**
+ * Extracts a value from a JSON object using a simple path expression.
+ * 
+ * @param json the JSON object to extract from
+ * @param path the path to extract (no wildcards)
+ * @return the extracted data
+ */
+private Object extractSimplePath(JSONObject json, String path) {
+    String[] segments = path.split("\\.");
+    Object current = json;
+    
+    for (String segment : segments) {
+        if (current == null) {
+            return null;
+        }
+        
+        // Handle array access
+        if (segment.contains("[") && segment.endsWith("]")) {
+            String fieldName = segment.substring(0, segment.indexOf('['));
+            String indexStr = segment.substring(segment.indexOf('[') + 1, segment.length() - 1);
+            
+            // Get the array field first
+            if (current instanceof JSONObject) {
+                JSONObject jsonObj = (JSONObject) current;
+                if (!jsonObj.has(fieldName)) {
+                    return null;
+                }
+                current = jsonObj.get(fieldName);
+            } else {
+                return null;
+            }
+            
+            // Then handle array indexing
+            if (current instanceof JSONArray) {
+                JSONArray array = (JSONArray) current;
+                
+                // Handle numeric index
+                try {
+                    int index = Integer.parseInt(indexStr);
+                    if (index >= 0 && index < array.length()) {
+                        current = array.get(index);
+                    } else {
+                        return null;
+                    }
+                } catch (NumberFormatException e) {
+                    return null;
+                }
+            } else {
+                return null;
+            }
+        } 
+        // Simple field access
+        else if (current instanceof JSONObject) {
+            JSONObject jsonObj = (JSONObject) current;
+            if (!jsonObj.has(segment)) {
+                return null;
+            }
+            current = jsonObj.get(segment);
+        } else {
+            return null;
+        }
+    }
+    
+    return current;
+}
+
+/**
+ * Verifies that database query results exist in the API response at a specific path.
+ * Supports custom field mapping and nested response paths.
+ * 
+ * @param queryResult the variable name containing database query results
+ * @param responsePath JSON path to the field values in the response (supports nested paths)
+ * @param fieldMappings comma-separated mappings of DB columns to response fields (format: "dbField1:responseField1,dbField2:responseField2")
+ * @param keyField optional key field for matching records (must be specified as DB field name)
+ */
+@QAFTestStep(description = "I verify database fields from {queryResult} exist in response path {responsePath} with mappings {fieldMappings} using key {keyField}")
+public void verifyDbFieldsInResponsePath(String queryResult, String responsePath, String fieldMappings, String keyField) {
+    logger.info("Verifying database fields from " + queryResult + " exist in response at " + responsePath);
+    
+    ApiResponse response = TestContextManager.getLastApiResponse();
+    if (response == null) {
+        Reporter.log("No API response available. Make sure to send a request first.", MessageTypes.Fail);
+        Assert.fail("No API response available");
+        return;
+    }
+    
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> dbResults = (List<Map<String, Object>>) TestContextManager.getContext("db.query." + queryResult);
+    if (dbResults == null || dbResults.isEmpty()) {
+        Reporter.log("No database results available for key: " + queryResult, MessageTypes.Fail);
+        Assert.fail("No database results available");
+        return;
+    }
+    
+    // Create a copy of the DB results with only the fields we want to compare
+    List<Map<String, Object>> filteredDbResults = new ArrayList<>();
+    
+    // Parse field mappings to get the DB fields to include
+    Map<String, String> dbToResponseMapping = new HashMap<>();
+    
+    if (fieldMappings != null && !fieldMappings.isEmpty()) {
+        String[] mappingPairs = fieldMappings.split("\\s*,\\s*");
+        for (String pair : mappingPairs) {
+            String[] parts = pair.split("\\s*:\\s*");
+            if (parts.length == 2) {
+                String dbField = parts[0].trim();
+                String responseField = parts[1].trim();
+                dbToResponseMapping.put(dbField, responseField);
+            }
+        }
+    }
+    
+    if (dbToResponseMapping.isEmpty()) {
+        Reporter.log("No field mappings provided", MessageTypes.Fail);
+        Assert.fail("No field mappings provided");
+        return;
+    }
+    
+    // Find the response field name for the key field if specified
+    String responseKeyField = null;
+    if (keyField != null && !keyField.isEmpty()) {
+        responseKeyField = dbToResponseMapping.get(keyField);
+        // If no mapping exists for the key field, use it as is
+        if (responseKeyField == null) {
+            responseKeyField = keyField;
+        }
+    }
+    
+    // Create filtered DB results with only the mapped fields, using response field names
+    for (Map<String, Object> record : dbResults) {
+        Map<String, Object> filteredRecord = new HashMap<>();
+        
+        // Add all the fields we want to compare using the response field names
+        for (Map.Entry<String, String> mapping : dbToResponseMapping.entrySet()) {
+            String dbField = mapping.getKey();
+            String responseField = mapping.getValue();
+            
+            if (record.containsKey(dbField)) {
+                // Store the value with the response field name as the key
+                filteredRecord.put(responseField, record.get(dbField));
+            }
+        }
+        
+        if (!filteredRecord.isEmpty()) {
+            filteredDbResults.add(filteredRecord);
+        }
+    }
+    
+    // Store these filtered results in the context with a temporary key
+    String tempKey = "temp.db." + System.currentTimeMillis();
+    TestContextManager.setContext("db.query." + tempKey, filteredDbResults);
+    
+    // Extract response data at the specified path
+    JSONObject jsonResponse = response.getJsonObject();
+    Object responseData = extractFromJsonPath(jsonResponse, responsePath);
+    
+    if (responseData == null) {
+        Reporter.log("Response data not found at path: " + responsePath, MessageTypes.Fail);
+        Assert.fail("Response data not found at path: " + responsePath);
+        return;
+    }
+    
+    // Create a temporary field in the JSON object to hold the extracted data
+    String tempField = "__extracted_data_" + System.currentTimeMillis();
+    
+    // Add it to the response for regular processing
+    if (responseData instanceof JSONArray) {
+        jsonResponse.put(tempField, responseData);
+    } else if (responseData instanceof JSONObject) {
+        JSONArray array = new JSONArray();
+        array.put(responseData);
+        jsonResponse.put(tempField, array);
+    } else {
+        Reporter.log("Data at path '" + responsePath + "' is not a valid JSON object or array", MessageTypes.Fail);
+        Assert.fail("Invalid data type at path: " + responsePath);
+        return;
+    }
+    
+    try {
+        // Use the existing validation method with our temporary data
+        validateResponseAgainstQueryResult(tempField, tempKey, responseKeyField);
+    } finally {
+        // Clean up temporary data
+        jsonResponse.remove(tempField);
+        TestContextManager.removeContext("db.query." + tempKey);
+    }
+}
+
+/**
+ * Check if data exists using stored procedure with parameters from test context.
+ * Parameters should be set in test data before calling this step.
+ * 
+ * @param procedureName the stored procedure name
+ * @param paramNames comma-separated parameter names to get from test data
+ */
+@QAFTestStep(description = "I check if data exists using stored procedure {procedureName} with params {paramNames}")
+public void checkDataExistsUsingStoredProc(String procedureName, String paramNames) {
+    logger.info("Checking data using stored procedure: " + procedureName);
+    
+    try {
+        // Get parameter values from test data
+        Map<String, Object> testData = TestContextManager.getTestData();
+        List<Object> paramValues = new ArrayList<>();
+        
+        // Split parameter names and get values
+        String[] params = paramNames.split(",");
+        for (String param : params) {
+            param = param.trim();
+            Object value = testData.get(param);
+            paramValues.add(value);
+            logger.debug("Parameter " + param + " = " + value);
+        }
+        
+        // Execute stored procedure
+        Object result = DatabaseUtil.executeStoredProcedureWithResult(procedureName, paramValues);
+        
+        // Check result
+        boolean dataExists = false;
+        if (result instanceof Boolean) {
+            dataExists = (Boolean) result;
+        } else if (result instanceof Number) {
+            dataExists = ((Number) result).intValue() > 0;
+        } else if (result instanceof List) {
+            dataExists = !((List<?>) result).isEmpty();
+        }
+        
+        // Store result
+        TestContextManager.setTestData("data.exists", dataExists);
+        TestContextManager.setTestData("skip.ui.setup", dataExists);
+        
+        Reporter.log("Data exists = " + dataExists);
+        
+    } catch (Exception e) {
+        logger.error("Error checking data with stored procedure", e);
+        TestContextManager.setTestData("data.exists", false);
+        TestContextManager.setTestData("skip.ui.setup", false);
+    }
+}
+
+/**
+ * Check if data exists in table with simple WHERE conditions.
+ * 
+ * @param tableName the table name
+ * @param whereClause the WHERE clause without 'WHERE' keyword (e.g., "deal_id = ? AND status = ?")
+ * @param paramNames comma-separated parameter names to get values from test data
+ */
+@QAFTestStep(description = "I check if data exists in table {tableName} where {whereClause} using params {paramNames}")
+public void checkDataExistsInTableWithParams(String tableName, String whereClause, String paramNames) {
+    logger.info("Checking data in table: " + tableName);
+    
+    try {
+        // Build query
+        String query = "SELECT COUNT(*) FROM " + tableName + " WHERE " + whereClause;
+        logger.info("Query: " + query);
+        
+        // Get parameter values
+        Map<String, Object> testData = TestContextManager.getTestData();
+        List<Object> paramValues = new ArrayList<>();
+        
+        String[] params = paramNames.split(",");
+        for (String param : params) {
+            param = param.trim();
+            Object value = testData.get(param);
+            paramValues.add(value);
+            logger.debug("Parameter " + param + " = " + value);
+        }
+        
+        // Execute query
+        List<Map<String, Object>> results = DatabaseUtil.executeSelectQuery(query, paramValues);
+        
+        // Check count
+        boolean dataExists = false;
+        if (!results.isEmpty()) {
+            Object count = results.get(0).values().iterator().next();
+            dataExists = (count != null && 
+                        ((count instanceof Number && ((Number) count).intValue() > 0) ||
+                         (count instanceof String && Integer.parseInt(count.toString()) > 0)));
+        }
+        
+        // Store result
+        TestContextManager.setTestData("data.exists", dataExists);
+        TestContextManager.setTestData("skip.ui.setup", dataExists);
+        
+        Reporter.log("Found " + (dataExists ? "existing" : "no") + " data in " + tableName);
+        
+    } catch (Exception e) {
+        logger.error("Error checking data in table", e);
+        TestContextManager.setTestData("data.exists", false);
+        TestContextManager.setTestData("skip.ui.setup", false);
+    }
+}
+
+/**
+ * Even simpler version - check if data exists for specific deal ID.
+ * 
+ * @param tableName the table name
+ * @param dealId the deal ID to check
+ */
+@QAFTestStep(description = "I check if data exists in table {tableName} for deal {dealId}")
+public void checkDataExistsForDeal(String tableName, String dealId) {
+    logger.info("Checking data in table " + tableName + " for deal " + dealId);
+    
+    try {
+        String query = "SELECT COUNT(*) FROM " + tableName + " WHERE deal_id = ?";
+        List<Object> params = Arrays.asList(dealId);
+        
+        List<Map<String, Object>> results = DatabaseUtil.executeSelectQuery(query, params);
+        
+        boolean dataExists = false;
+        if (!results.isEmpty()) {
+            Object count = results.get(0).values().iterator().next();
+            dataExists = (count != null && Integer.parseInt(count.toString()) > 0);
+        }
+        
+        TestContextManager.setTestData("data.exists", dataExists);
+        TestContextManager.setTestData("skip.ui.setup", dataExists);
+        
+        Reporter.log("Data " + (dataExists ? "exists" : "does not exist") + " for deal " + dealId);
+        
+    } catch (Exception e) {
+        logger.error("Error checking data", e);
+        TestContextManager.setTestData("data.exists", false);
+        TestContextManager.setTestData("skip.ui.setup", false);
+    }
+}
+
+/**
+ * Alternative: Single parameter stored procedure check.
+ * 
+ * @param procedureName the stored procedure name
+ * @param paramValue the single parameter value
+ */
+@QAFTestStep(description = "I check if data exists using stored procedure {procedureName} with parameter {paramValue}")
+public void checkDataUsingStoredProcWithSingleParam(String procedureName, String paramValue) {
+    logger.info("Checking data using stored procedure: " + procedureName + " with param: " + paramValue);
+    
+    try {
+        List<Object> params = Arrays.asList(paramValue);
+        Object result = DatabaseUtil.executeStoredProcedureWithResult(procedureName, params);
+        
+        boolean dataExists = false;
+        if (result instanceof Boolean) {
+            dataExists = (Boolean) result;
+        } else if (result instanceof Number) {
+            dataExists = ((Number) result).intValue() > 0;
+        }
+        
+        TestContextManager.setTestData("data.exists", dataExists);
+        TestContextManager.setTestData("skip.ui.setup", dataExists);
+        
+        Reporter.log("Data exists = " + dataExists);
+        
+    } catch (Exception e) {
+        logger.error("Error checking data", e);
+        TestContextManager.setTestData("data.exists", false);
+        TestContextManager.setTestData("skip.ui.setup", false);
+    }
+}
+
+/**
+ * Validates a specific element in a JSON array from the API response against captured data.
+ * 
+ * @param arrayPath the JSON path to the array (e.g., "complianceTests")
+ * @param index the index of the element to validate (0-based)
+ * @param capturedDataKey the key where captured data is stored in test context
+ */
+@QAFTestStep(description = "the API response array {arrayPath} element at index {index} should match the captured {capturedDataKey} data")
+public void validateArrayElementAtIndex(String arrayPath, int index, String capturedDataKey) {
+    ApiResponse response = getResponse();
+    if (response == null) {
+        fail("No response available. Make sure to send a request first.");
+        return;
+    }
+    
+    try {
+        JSONObject jsonResponse = response.getJsonResponse();
+        if (!jsonResponse.has(arrayPath)) {
+            fail("Response does not contain array: " + arrayPath);
+            return;
+        }
+        
+        JSONArray responseArray = jsonResponse.getJSONArray(arrayPath);
+        if (index >= responseArray.length()) {
+            fail("Array index " + index + " is out of bounds. Array size is " + responseArray.length());
+            return;
+        }
+        
+        // Get the specific element
+        JSONObject actualElement = responseArray.getJSONObject(index);
+        
+        // Get captured data
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> capturedData = (List<Map<String, Object>>) TestContextManager.getContext(capturedDataKey);
+        
+        if (capturedData == null || capturedData.isEmpty()) {
+            fail("No captured data found for key: " + capturedDataKey);
+            return;
+        }
+        
+        // Get the corresponding captured element
+        Map<String, Object> expectedElement = capturedData.get(Math.min(index, capturedData.size() - 1));
+        
+        // Validate each field
+        validateJsonObjectAgainstMap(actualElement, expectedElement, arrayPath + "[" + index + "]");
+        
+        Reporter.log("Successfully validated array element at index " + index);
+        
+    } catch (Exception e) {
+        logger.error("Error validating array element", e);
+        fail("Error validating array element: " + e.getMessage());
+    }
+}
+
+/**
+ * Validates specific fields of an array element.
+ * 
+ * @param arrayPath the JSON path to the array
+ * @param index the index of the element
+ * @param fields comma-separated list of fields to validate
+ * @param capturedDataKey the key where captured data is stored
+ */
+@QAFTestStep(description = "the API response array {arrayPath} element at index {index} fields {fields} should match the captured {capturedDataKey} data")
+public void validateArrayElementFields(String arrayPath, int index, String fields, String capturedDataKey) {
+    ApiResponse response = getResponse();
+    if (response == null) {
+        fail("No response available. Make sure to send a request first.");
+        return;
+    }
+    
+    try {
+        JSONObject jsonResponse = response.getJsonResponse();
+        JSONArray responseArray = jsonResponse.getJSONArray(arrayPath);
+        JSONObject actualElement = responseArray.getJSONObject(index);
+        
+        // Get captured data
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> capturedData = (List<Map<String, Object>>) TestContextManager.getContext(capturedDataKey);
+        Map<String, Object> expectedElement = capturedData.get(Math.min(index, capturedData.size() - 1));
+        
+        // Parse fields to validate
+        String[] fieldArray = fields.split(",");
+        
+        for (String field : fieldArray) {
+            field = field.trim();
+            
+            if (!actualElement.has(field)) {
+                fail("Field '" + field + "' not found in response array element");
+                continue;
+            }
+            
+            Object actualValue = actualElement.get(field);
+            Object expectedValue = expectedElement.get(field);
+            
+            if (!areValuesEqual(actualValue, expectedValue)) {
+                fail("Field '" + field + "' mismatch - Expected: " + expectedValue + ", Actual: " + actualValue);
+            } else {
+                Reporter.log("Field '" + field + "' matches: " + actualValue);
+            }
+        }
+        
+        Reporter.log("Successfully validated specified fields for array element at index " + index);
+        
+    } catch (Exception e) {
+        logger.error("Error validating array element fields", e);
+        fail("Error validating array element fields: " + e.getMessage());
+    }
+}
+
+/**
+ * Validates array elements that match specific criteria.
+ * 
+ * @param arrayPath the JSON path to the array
+ * @param matchField the field to match on (e.g., "testId")
+ * @param matchValue the value to match
+ * @param capturedDataKey the key where captured data is stored
+ */
+@QAFTestStep(description = "the API response array {arrayPath} element where {matchField} equals {matchValue} should match the captured {capturedDataKey} data")
+public void validateArrayElementByFieldValue(String arrayPath, String matchField, String matchValue, String capturedDataKey) {
+    ApiResponse response = getResponse();
+    if (response == null) {
+        fail("No response available. Make sure to send a request first.");
+        return;
+    }
+    
+    try {
+        JSONObject jsonResponse = response.getJsonResponse();
+        JSONArray responseArray = jsonResponse.getJSONArray(arrayPath);
+        
+        // Find the matching element
+        JSONObject actualElement = null;
+        for (int i = 0; i < responseArray.length(); i++) {
+            JSONObject element = responseArray.getJSONObject(i);
+            if (element.has(matchField) && matchValue.equals(element.get(matchField).toString())) {
+                actualElement = element;
+                break;
+            }
+        }
+        
+        if (actualElement == null) {
+            fail("No element found in array where " + matchField + " = " + matchValue);
+            return;
+        }
+        
+        // Get captured data and find matching element
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> capturedData = (List<Map<String, Object>>) TestContextManager.getContext(capturedDataKey);
+        
+        Map<String, Object> expectedElement = null;
+        for (Map<String, Object> captured : capturedData) {
+            if (matchValue.equals(String.valueOf(captured.get(matchField)))) {
+                expectedElement = captured;
+                break;
+            }
+        }
+        
+        if (expectedElement == null) {
+            fail("No captured data found where " + matchField + " = " + matchValue);
+            return;
+        }
+        
+        // Validate the elements
+        validateJsonObjectAgainstMap(actualElement, expectedElement, arrayPath + "[" + matchField + "=" + matchValue + "]");
+        
+        Reporter.log("Successfully validated array element where " + matchField + " = " + matchValue);
+        
+    } catch (Exception e) {
+        logger.error("Error validating array element by field value", e);
+        fail("Error validating array element: " + e.getMessage());
+    }
+}
+
+/**
+ * Validates only specific fields of elements that match criteria.
+ * 
+ * @param arrayPath the JSON path to the array
+ * @param matchField the field to match on
+ * @param matchValue the value to match
+ * @param validateFields comma-separated list of fields to validate
+ * @param capturedDataKey the key where captured data is stored
+ */
+@QAFTestStep(description = "the API response array {arrayPath} element where {matchField} equals {matchValue} should have fields {validateFields} matching the captured {capturedDataKey} data")
+public void validateSpecificFieldsByMatch(String arrayPath, String matchField, String matchValue, 
+                                         String validateFields, String capturedDataKey) {
+    ApiResponse response = getResponse();
+    if (response == null) {
+        fail("No response available. Make sure to send a request first.");
+        return;
+    }
+    
+    try {
+        JSONObject jsonResponse = response.getJsonResponse();
+        JSONArray responseArray = jsonResponse.getJSONArray(arrayPath);
+        
+        // Find matching element in response
+        JSONObject actualElement = null;
+        for (int i = 0; i < responseArray.length(); i++) {
+            JSONObject element = responseArray.getJSONObject(i);
+            if (element.has(matchField) && matchValue.equals(element.get(matchField).toString())) {
+                actualElement = element;
+                break;
+            }
+        }
+        
+        if (actualElement == null) {
+            fail("No element found in array where " + matchField + " = " + matchValue);
+            return;
+        }
+        
+        // Get captured data
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> capturedData = (List<Map<String, Object>>) TestContextManager.getContext(capturedDataKey);
+        
+        Map<String, Object> expectedElement = null;
+        for (Map<String, Object> captured : capturedData) {
+            if (matchValue.equals(String.valueOf(captured.get(matchField)))) {
+                expectedElement = captured;
+                break;
+            }
+        }
+        
+        // Validate only specified fields
+        String[] fields = validateFields.split(",");
+        for (String field : fields) {
+            field = field.trim();
+            
+            Object actualValue = actualElement.opt(field);
+            Object expectedValue = expectedElement.get(field);
+            
+            if (!areValuesEqual(actualValue, expectedValue)) {
+                fail("Field '" + field + "' mismatch - Expected: " + expectedValue + ", Actual: " + actualValue);
+            } else {
+                Reporter.log("Field '" + field + "' matches: " + actualValue);
+            }
+        }
+        
+        Reporter.log("Successfully validated specified fields for element where " + matchField + " = " + matchValue);
+        
+    } catch (Exception e) {
+        logger.error("Error validating specific fields", e);
+        fail("Error validating specific fields: " + e.getMessage());
+    }
+}
+
+/**
+ * Helper method to validate a JSON object against a map.
+ */
+private void validateJsonObjectAgainstMap(JSONObject actual, Map<String, Object> expected, String path) {
+    for (Map.Entry<String, Object> entry : expected.entrySet()) {
+        String field = entry.getKey();
+        Object expectedValue = entry.getValue();
+        
+        if (!actual.has(field)) {
+            Reporter.log("Field '" + field + "' missing in " + path, "fail");
+            continue;
+        }
+        
+        Object actualValue = actual.get(field);
+        
+        if (!areValuesEqual(actualValue, expectedValue)) {
+            Reporter.log("Field '" + field + "' mismatch in " + path + " - Expected: " + expectedValue + ", Actual: " + actualValue, "fail");
+        } else {
+            Reporter.log("Field '" + field + "' matches in " + path + ": " + actualValue);
+        }
+    }
+}
+
+/**
+ * Helper method to compare values.
+ */
+private boolean areValuesEqual(Object actual, Object expected) {
+    if (expected == null) {
+        return actual == null || actual == JSONObject.NULL;
+    }
+    
+    if (actual == JSONObject.NULL) {
+        return expected == null;
+    }
+    
+    // Convert to strings for comparison to handle type differences
+    return expected.toString().equals(actual.toString());
+}
+
+/**
+ * Compare JSON arrays with complete validation of all elements
+ * This method ensures all objects are compared even if mismatches are found
+ */
+private boolean compareJsonArrays(JSONArray expected, JSONArray actual, String path) {
+    boolean overallMatch = true;
+    List<String> mismatches = new ArrayList<>();
+    
+    // First check array sizes
+    if (expected.length() != actual.length()) {
+        String message = String.format("Array size mismatch at %s - Expected: %d, Actual: %d", 
+                                     path, expected.length(), actual.length());
+        logComparison(path, message, false);
+        mismatches.add(message);
+        overallMatch = false;
+        
+        // If sizes don't match, we still want to compare what we can
+        // Don't return false here - continue comparing
+    }
+    
+    int minLength = Math.min(expected.length(), actual.length());
+    
+    // For unordered comparison, track which actual items have been matched
+    Set<Integer> matchedActualIndices = new HashSet<>();
+    
+    // Compare each expected element
+    for (int i = 0; i < expected.length(); i++) {
+        String elementPath = path + "[" + i + "]";
+        
+        if (i >= actual.length()) {
+            String message = "Missing element at index " + i + " in actual array";
+            logComparison(elementPath, message, false);
+            mismatches.add(elementPath + ": " + message);
+            overallMatch = false;
+            continue; // Continue checking other elements
+        }
+        
+        Object expectedElement = expected.get(i);
+        boolean elementMatched = false;
+        
+        // For unordered comparison, try to find a matching element in actual array
+        if (!isOrderedComparison) {
+            for (int j = 0; j < actual.length(); j++) {
+                if (matchedActualIndices.contains(j)) {
+                    continue; // Skip already matched elements
+                }
+                
+                Object actualElement = actual.get(j);
+                
+                // Try to match this element
+                if (compareElements(expectedElement, actualElement, elementPath + " (unordered)", true)) {
+                    matchedActualIndices.add(j);
+                    elementMatched = true;
+                    logComparison(elementPath, "Matched with actual[" + j + "]", true);
+                    break;
+                }
+            }
+            
+            if (!elementMatched) {
+                String message = "No matching element found in actual array for expected[" + i + "]";
+                logComparison(elementPath, message, false);
+                mismatches.add(elementPath + ": " + message);
+                overallMatch = false;
+                // Don't return false - continue checking other elements
+            }
+        } else {
+            // Ordered comparison - compare elements at same index
+            Object actualElement = actual.get(i);
+            elementMatched = compareElements(expectedElement, actualElement, elementPath, false);
+            
+            if (!elementMatched) {
+                overallMatch = false;
+                // Don't return false - continue checking other elements
+            }
+        }
+    }
+    
+    // Check for extra elements in actual array (for unordered comparison)
+    if (!isOrderedComparison) {
+        for (int j = 0; j < actual.length(); j++) {
+            if (!matchedActualIndices.contains(j)) {
+                String message = "Extra element in actual array at index " + j;
+                logComparison(path + "[extra-" + j + "]", message, false);
+                mismatches.add(path + ": " + message);
+                overallMatch = false;
+            }
+        }
+    } else if (actual.length() > expected.length()) {
+        // For ordered comparison, report extra elements at the end
+        for (int j = expected.length(); j < actual.length(); j++) {
+            String message = "Extra element in actual array at index " + j;
+            logComparison(path + "[" + j + "]", message, false);
+            mismatches.add(path + ": " + message);
+            overallMatch = false;
+        }
+    }
+    
+    // Log summary of array comparison
+    if (overallMatch) {
+        logComparison(path, "Array comparison successful - all " + expected.length() + " elements match", true);
+    } else {
+        logComparison(path, "Array comparison failed - " + mismatches.size() + " mismatches found", false);
+        Reporter.log("Array comparison summary for " + path + ":", "fail");
+        for (String mismatch : mismatches) {
+            Reporter.log("  - " + mismatch, "fail");
+        }
+    }
+    
+    return overallMatch;
+}
+
+/**
+ * Compare individual elements (could be objects, arrays, or primitives)
+ * @param suppressLogging if true, don't log individual mismatches (used for unordered searching)
+ */
+private boolean compareElements(Object expected, Object actual, String path, boolean suppressLogging) {
+    // If both are JSON objects
+    if (expected instanceof JSONObject && actual instanceof JSONObject) {
+        return compareJsonObjects((JSONObject) expected, (JSONObject) actual, path, suppressLogging);
+    }
+    
+    // If both are JSON arrays
+    if (expected instanceof JSONArray && actual instanceof JSONArray) {
+        return compareJsonArrays((JSONArray) expected, (JSONArray) actual, path);
+    }
+    
+    // Otherwise, compare as primitives
+    return comparePrimitivesWithLogging(expected, actual, path, suppressLogging);
+}
+
+/**
+ * Compare JSON objects with optional logging suppression
+ */
+private boolean compareJsonObjects(JSONObject expected, JSONObject actual, String path, boolean suppressLogging) {
+    boolean matches = true;
+    List<String> mismatches = new ArrayList<>();
+    
+    // Check all expected keys
+    for (String key : expected.keySet()) {
+        String fieldPath = path + "." + key;
+        
+        if (!actual.has(key)) {
+            if (!suppressLogging) {
+                logComparison(fieldPath, "Field missing in actual", false);
+                mismatches.add(key + ": missing");
+            }
+            matches = false;
+            continue; // Continue checking other fields
+        }
+        
+        Object expectedValue = expected.get(key);
+        Object actualValue = actual.get(key);
+        
+        boolean fieldMatches = compareElements(expectedValue, actualValue, fieldPath, suppressLogging);
+        if (!fieldMatches) {
+            matches = false;
+            if (!suppressLogging) {
+                mismatches.add(key + ": mismatch");
+            }
+            // Continue checking other fields
+        }
+    }
+    
+    // Check for extra fields in actual (optional - you can make this configurable)
+    if (checkExtraFields) {
+        for (String key : actual.keySet()) {
+            if (!expected.has(key)) {
+                if (!suppressLogging) {
+                    logComparison(path + "." + key, "Extra field in actual", false);
+                    mismatches.add(key + ": extra field");
+                }
+                matches = false;
+            }
+        }
+    }
+    
+    // Log object comparison summary
+    if (!suppressLogging && !matches) {
+        logComparison(path, "Object comparison failed - " + mismatches.size() + " mismatches", false);
+    }
+    
+    return matches;
+}
+
+/**
+ * Wrapper for primitive comparison with logging control
+ */
+private boolean comparePrimitivesWithLogging(Object expected, Object actual, String path, boolean suppressLogging) {
+    if (suppressLogging) {
+        // Store current logging state and disable logging temporarily
+        boolean oldLoggingState = enableDetailedLogging;
+        enableDetailedLogging = false;
+        boolean result = comparePrimitives(expected, actual, path);
+        enableDetailedLogging = oldLoggingState;
+        return result;
+    } else {
+        return comparePrimitives(expected, actual, path);
+    }
+}
+
+/**
+ * Configuration options for comparison
+ */
+private boolean isOrderedComparison = false; // Set to true for ordered array comparison
+private boolean checkExtraFields = true;     // Set to false to ignore extra fields in actual objects
+private boolean enableDetailedLogging = true; // Control detailed logging
+
+/**
+ * Log comparison results
+ */
+private void logComparison(String path, String message, boolean success) {
+    if (!enableDetailedLogging && success) {
+        return; // Skip successful comparisons if detailed logging is disabled
+    }
+    
+    String logMessage = String.format("[%s] %s: %s", 
+                                    success ? "MATCH" : "MISMATCH", 
+                                    path, 
+                                    message);
+    
+    if (success) {
+        Reporter.log(logMessage);
+        logger.debug(logMessage);
+    } else {
+        Reporter.log(logMessage, "fail");
+        logger.warn(logMessage);
+    }
+}
+
+/**
+ * Main entry point for JSON comparison
+ */
+public boolean compareJson(String expectedJson, String actualJson) {
+    try {
+        // Clear any previous comparison state
+        comparisonResults.clear();
+        
+        Object expected = parseJson(expectedJson);
+        Object actual = parseJson(actualJson);
+        
+        String rootPath = "$";
+        boolean result = compareElements(expected, actual, rootPath, false);
+        
+        // Log final summary
+        if (result) {
+            Reporter.log("JSON comparison completed successfully - all elements match");
+        } else {
+            Reporter.log("JSON comparison failed - see detailed comparison results above", "fail");
+        }
+        
+        return result;
+        
+    } catch (Exception e) {
+        logger.error("Error during JSON comparison", e);
+        Reporter.log("JSON comparison error: " + e.getMessage(), "fail");
+        return false;
+    }
+}
+
+/**
+ * Parse JSON string to appropriate object
+ */
+private Object parseJson(String json) throws JSONException {
+    json = json.trim();
+    if (json.startsWith("{")) {
+        return new JSONObject(json);
+    } else if (json.startsWith("[")) {
+        return new JSONArray(json);
+    } else {
+        throw new JSONException("Invalid JSON format");
+    }
+}
+
+// Add this to store comparison results if needed
+private List<ComparisonResult> comparisonResults = new ArrayList<>();
+
+class ComparisonResult {
+    String path;
+    boolean success;
+    String message;
+    
+    ComparisonResult(String path, boolean success, String message) {
+        this.path = path;
+        this.success = success;
+        this.message = message;
+    }
+}
+
+package com.qaf.framework.util;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import com.qmetry.qaf.automation.util.Reporter;
+
+import java.util.*;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+/**
+ * Deep JSON Comparator that handles complex, unordered JSON structures
+ * with tolerance for numeric comparisons and comprehensive error reporting
+ */
+public class DeepJsonComparator {
+    
+    private static final Log logger = LogFactory.getLog(DeepJsonComparator.class);
+    
+    // Configuration options
+    private boolean checkExtraFields = true;
+    private boolean enableDetailedLogging = true;
+    private double numericTolerance = 1e-9;
+    private int maxDepth = 100; // Prevent infinite recursion
+    private boolean treatNullAsEmpty = false; // Whether to treat null and empty arrays/objects as equal
+    
+    // Tracking for comprehensive reporting
+    private List<ComparisonResult> allMismatches = new ArrayList<>();
+    private Set<String> processedPaths = new HashSet<>();
+    private int totalComparisons = 0;
+    private int successfulComparisons = 0;
+    
+    /**
+     * Main entry point for JSON comparison
+     */
+    public ComparisonReport compareJson(String expectedJson, String actualJson) {
+        // Reset state
+        allMismatches.clear();
+        processedPaths.clear();
+        totalComparisons = 0;
+        successfulComparisons = 0;
+        
+        try {
+            Object expected = parseJson(expectedJson);
+            Object actual = parseJson(actualJson);
+            
+            boolean result = compareElements(expected, actual, "$", 0);
+            
+            return new ComparisonReport(result, totalComparisons, successfulComparisons, 
+                                      new ArrayList<>(allMismatches));
+            
+        } catch (Exception e) {
+            logger.error("Error during JSON comparison", e);
+            allMismatches.add(new ComparisonResult("$", false, "Parse error: " + e.getMessage()));
+            return new ComparisonReport(false, totalComparisons, successfulComparisons, allMismatches);
+        }
+    }
+    
+    /**
+     * Compare any two elements (objects, arrays, or primitives)
+     */
+    private boolean compareElements(Object expected, Object actual, String path, int depth) {
+        if (depth > maxDepth) {
+            logMismatch(path, "Maximum depth exceeded", false);
+            return false;
+        }
+        
+        totalComparisons++;
+        
+        // Handle null cases
+        if (expected == null && actual == null) {
+            successfulComparisons++;
+            return true;
+        }
+        
+        if (expected == null || actual == null) {
+            // Check if we should treat null as empty
+            if (treatNullAsEmpty) {
+                if (isEmptyStructure(expected) && isEmptyStructure(actual)) {
+                    successfulComparisons++;
+                    return true;
+                }
+            }
+            logMismatch(path, String.format("Null mismatch - Expected: %s, Actual: %s", 
+                                          expected, actual), false);
+            return false;
+        }
+        
+        // Compare based on type
+        if (expected instanceof JSONObject && actual instanceof JSONObject) {
+            return compareJsonObjects((JSONObject) expected, (JSONObject) actual, path, depth);
+        } else if (expected instanceof JSONArray && actual instanceof JSONArray) {
+            return compareJsonArrays((JSONArray) expected, (JSONArray) actual, path, depth);
+        } else if (expected instanceof JSONObject || actual instanceof JSONObject ||
+                   expected instanceof JSONArray || actual instanceof JSONArray) {
+            // Type mismatch
+            logMismatch(path, String.format("Type mismatch - Expected: %s, Actual: %s", 
+                                          getType(expected), getType(actual)), false);
+            return false;
+        } else {
+            // Compare as primitives
+            return comparePrimitives(expected, actual, path);
+        }
+    }
+    
+    /**
+     * Deep comparison of JSON objects with unordered field matching
+     */
+    private boolean compareJsonObjects(JSONObject expected, JSONObject actual, String path, int depth) {
+        boolean overallMatch = true;
+        Set<String> allKeys = new HashSet<>();
+        allKeys.addAll(expected.keySet());
+        allKeys.addAll(actual.keySet());
+        
+        Map<String, List<String>> objectMismatches = new HashMap<>();
+        
+        // Compare all keys
+        for (String key : allKeys) {
+            String fieldPath = path + "." + key;
+            
+            if (!expected.has(key)) {
+                if (checkExtraFields) {
+                    objectMismatches.computeIfAbsent("extra", k -> new ArrayList<>()).add(key);
+                    logMismatch(fieldPath, "Extra field in actual", false);
+                    overallMatch = false;
+                }
+                continue;
+            }
+            
+            if (!actual.has(key)) {
+                objectMismatches.computeIfAbsent("missing", k -> new ArrayList<>()).add(key);
+                logMismatch(fieldPath, "Missing field in actual", false);
+                overallMatch = false;
+                continue;
+            }
+            
+            // Both have the key, compare values
+            Object expectedValue = expected.get(key);
+            Object actualValue = actual.get(key);
+            
+            boolean fieldMatches = compareElements(expectedValue, actualValue, fieldPath, depth + 1);
+            if (!fieldMatches) {
+                objectMismatches.computeIfAbsent("mismatch", k -> new ArrayList<>()).add(key);
+                overallMatch = false;
+            }
+        }
+        
+        // Log summary for this object if there were issues
+        if (!overallMatch && enableDetailedLogging) {
+            StringBuilder summary = new StringBuilder("Object comparison failed at " + path + ":");
+            if (objectMismatches.containsKey("missing")) {
+                summary.append(" Missing fields: ").append(objectMismatches.get("missing"));
+            }
+            if (objectMismatches.containsKey("extra")) {
+                summary.append(" Extra fields: ").append(objectMismatches.get("extra"));
+            }
+            if (objectMismatches.containsKey("mismatch")) {
+                summary.append(" Mismatched fields: ").append(objectMismatches.get("mismatch"));
+            }
+            logger.debug(summary.toString());
+        }
+        
+        if (overallMatch) {
+            successfulComparisons++;
+        }
+        
+        return overallMatch;
+    }
+    
+    /**
+     * Deep comparison of JSON arrays with unordered matching
+     */
+    private boolean compareJsonArrays(JSONArray expected, JSONArray actual, String path, int depth) {
+        // For empty arrays
+        if (expected.length() == 0 && actual.length() == 0) {
+            successfulComparisons++;
+            return true;
+        }
+        
+        // Size check
+        if (expected.length() != actual.length()) {
+            logMismatch(path, String.format("Array size mismatch - Expected: %d, Actual: %d", 
+                                          expected.length(), actual.length()), false);
+            // Still try to match what we can for better error reporting
+        }
+        
+        // For unordered comparison, we need to find the best matching
+        List<Integer> unmatchedExpected = new ArrayList<>();
+        List<Integer> unmatchedActual = new ArrayList<>();
+        Set<Integer> matchedActual = new HashSet<>();
+        
+        // Initialize unmatched lists
+        for (int i = 0; i < expected.length(); i++) unmatchedExpected.add(i);
+        for (int i = 0; i < actual.length(); i++) unmatchedActual.add(i);
+        
+        // Try to match each expected element
+        Map<Integer, Integer> matches = new HashMap<>();
+        
+        for (int i = 0; i < expected.length(); i++) {
+            Object expectedElement = expected.get(i);
+            String elementPath = path + "[" + i + "]";
+            
+            // Find best matching actual element
+            Integer bestMatch = null;
+            double bestScore = 0;
+            
+            for (int j = 0; j < actual.length(); j++) {
+                if (matchedActual.contains(j)) continue;
+                
+                Object actualElement = actual.get(j);
+                
+                // Calculate match score (this is a simplified version)
+                double score = calculateMatchScore(expectedElement, actualElement, elementPath, depth);
+                
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMatch = j;
+                    if (score == 1.0) break; // Perfect match found
+                }
+            }
+            
+            if (bestMatch != null && bestScore > 0.5) { // Threshold for considering it a match
+                matches.put(i, bestMatch);
+                matchedActual.add(bestMatch);
+                unmatchedExpected.remove(Integer.valueOf(i));
+                unmatchedActual.remove(Integer.valueOf(bestMatch));
+            }
+        }
+        
+        // Now compare matched pairs and report results
+        boolean overallMatch = true;
+        
+        // Compare matched elements
+        for (Map.Entry<Integer, Integer> match : matches.entrySet()) {
+            int expectedIdx = match.getKey();
+            int actualIdx = match.getValue();
+            
+            Object expectedElement = expected.get(expectedIdx);
+            Object actualElement = actual.get(actualIdx);
+            
+            String matchPath = String.format("%s[%d->%d]", path, expectedIdx, actualIdx);
+            
+            boolean elementMatch = compareElements(expectedElement, actualElement, matchPath, depth + 1);
+            if (!elementMatch) {
+                overallMatch = false;
+            }
+        }
+        
+        // Report unmatched elements
+        for (Integer idx : unmatchedExpected) {
+            String elementPath = path + "[" + idx + "]";
+            logMismatch(elementPath, "No matching element found in actual array", false);
+            logDetailedElement(expected.get(idx), elementPath + " expected value");
+            overallMatch = false;
+        }
+        
+        for (Integer idx : unmatchedActual) {
+            String elementPath = path + "[actual:" + idx + "]";
+            logMismatch(elementPath, "Extra element in actual array", false);
+            logDetailedElement(actual.get(idx), elementPath + " actual value");
+            overallMatch = false;
+        }
+        
+        if (overallMatch && expected.length() == actual.length()) {
+            successfulComparisons++;
+            logSuccess(path, String.format("Array matched (%d elements)", expected.length()));
+        }
+        
+        return overallMatch && expected.length() == actual.length();
+    }
+    
+    /**
+     * Calculate match score between two elements (0 to 1)
+     */
+    private double calculateMatchScore(Object expected, Object actual, String path, int depth) {
+        // Quick check for same types
+        if (!isSameType(expected, actual)) {
+            return 0;
+        }
+        
+        // Disable logging for scoring
+        boolean oldLogging = enableDetailedLogging;
+        enableDetailedLogging = false;
+        List<ComparisonResult> oldMismatches = new ArrayList<>(allMismatches);
+        
+        boolean matches = compareElements(expected, actual, path + "_scoring", depth + 1);
+        
+        // Calculate score based on partial matches for objects
+        double score = matches ? 1.0 : 0.0;
+        
+        if (!matches && expected instanceof JSONObject && actual instanceof JSONObject) {
+            // For objects, calculate partial match score
+            JSONObject expObj = (JSONObject) expected;
+            JSONObject actObj = (JSONObject) actual;
+            
+            int totalFields = expObj.keySet().size();
+            int matchingFields = 0;
+            
+            for (String key : expObj.keySet()) {
+                if (actObj.has(key)) {
+                    Object expVal = expObj.get(key);
+                    Object actVal = actObj.get(key);
+                    
+                    if (compareElements(expVal, actVal, path + "_scoring." + key, depth + 2)) {
+                        matchingFields++;
+                    }
+                }
+            }
+            
+            score = totalFields > 0 ? (double) matchingFields / totalFields : 0;
+        }
+        
+        // Restore logging state and mismatches
+        enableDetailedLogging = oldLogging;
+        allMismatches = oldMismatches;
+        
+        return score;
+    }
+    
+    /**
+     * Compare primitive values with improved numeric handling
+     */
+    private boolean comparePrimitives(Object expected, Object actual, String path) {
+        // Handle null cases
+        if (expected == null && actual == null) {
+            successfulComparisons++;
+            return true;
+        }
+        
+        if (expected == null || actual == null) {
+            logMismatch(path, String.format("Null mismatch - Expected: %s, Actual: %s", 
+                                          expected, actual), false);
+            return false;
+        }
+        
+        // Numeric comparison
+        if (isNumericType(expected) && isNumericType(actual)) {
+            try {
+                BigDecimal expectedNum = toBigDecimal(expected);
+                BigDecimal actualNum = toBigDecimal(actual);
+                
+                BigDecimal diff = expectedNum.subtract(actualNum).abs();
+                
+                boolean matches;
+                if (expectedNum.compareTo(BigDecimal.ZERO) == 0) {
+                    matches = diff.compareTo(BigDecimal.valueOf(numericTolerance)) < 0;
+                } else {
+                    // Relative difference
+                    BigDecimal relativeDiff = diff.divide(expectedNum.abs(), 10, RoundingMode.HALF_UP);
+                    matches = relativeDiff.compareTo(BigDecimal.valueOf(numericTolerance)) < 0;
+                }
+                
+                if (matches) {
+                    successfulComparisons++;
+                    logSuccess(path, String.format("Numeric match: %s ≈ %s", expected, actual));
+                } else {
+                    logMismatch(path, String.format("Numeric mismatch - Expected: %s, Actual: %s (diff: %s)", 
+                                                  expected, actual, diff), false);
+                }
+                return matches;
+            } catch (Exception e) {
+                logger.warn("Error in numeric comparison at " + path, e);
+            }
+        }
+        
+        // String comparison
+        String expectedStr = String.valueOf(expected);
+        String actualStr = String.valueOf(actual);
+        
+        // Try parsing as numbers if they're strings
+        if (isNumeric(expectedStr) && isNumeric(actualStr)) {
+            return comparePrimitives(Double.parseDouble(expectedStr), 
+                                   Double.parseDouble(actualStr), path);
+        }
+        
+        // Boolean comparison (case-insensitive)
+        if (isBoolean(expectedStr) && isBoolean(actualStr)) {
+            boolean matches = expectedStr.equalsIgnoreCase(actualStr);
+            if (matches) {
+                successfulComparisons++;
+                logSuccess(path, "Boolean match: " + expectedStr);
+            } else {
+                logMismatch(path, String.format("Boolean mismatch - Expected: %s, Actual: %s", 
+                                              expectedStr, actualStr), false);
+            }
+            return matches;
+        }
+        
+        // String comparison
+        boolean matches = expectedStr.equals(actualStr);
+        if (matches) {
+            successfulComparisons++;
+            logSuccess(path, "String match: " + expectedStr);
+        } else {
+            logMismatch(path, String.format("String mismatch - Expected: '%s', Actual: '%s'", 
+                                          expectedStr, actualStr), false);
+        }
+        return matches;
+    }
+    
+    // ===== Utility Methods =====
+    
+    private boolean isSameType(Object obj1, Object obj2) {
+        if (obj1 == null || obj2 == null) return obj1 == obj2;
+        if (obj1 instanceof JSONObject && obj2 instanceof JSONObject) return true;
+        if (obj1 instanceof JSONArray && obj2 instanceof JSONArray) return true;
+        if (isNumericType(obj1) && isNumericType(obj2)) return true;
+        return obj1.getClass().equals(obj2.getClass());
+    }
+    
+    private boolean isNumericType(Object obj) {
+        return obj instanceof Number ||
+               (obj instanceof String && isNumeric((String) obj));
+    }
+    
+    private boolean isNumeric(String str) {
+        if (str == null || str.isEmpty()) return false;
+        try {
+            Double.parseDouble(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+    
+    private BigDecimal toBigDecimal(Object obj) {
+        if (obj instanceof BigDecimal) return (BigDecimal) obj;
+        if (obj instanceof Number) return BigDecimal.valueOf(((Number) obj).doubleValue());
+        if (obj instanceof String) return new BigDecimal((String) obj);
+        throw new IllegalArgumentException("Cannot convert to BigDecimal: " + obj);
+    }
+    
+    private boolean isBoolean(String str) {
+        return str != null && (str.equalsIgnoreCase("true") || str.equalsIgnoreCase("false"));
+    }
+    
+    private String getType(Object obj) {
+        if (obj == null) return "null";
+        if (obj instanceof JSONObject) return "object";
+        if (obj instanceof JSONArray) return "array";
+        if (obj instanceof String) return "string";
+        if (obj instanceof Number) return "number";
+        if (obj instanceof Boolean) return "boolean";
+        return obj.getClass().getSimpleName();
+    }
+    
+    private boolean isEmptyStructure(Object obj) {
+        if (obj == null) return true;
+        if (obj instanceof JSONObject) return ((JSONObject) obj).length() == 0;
+        if (obj instanceof JSONArray) return ((JSONArray) obj).length() == 0;
+        if (obj instanceof String) return ((String) obj).isEmpty();
+        return false;
+    }
+    
+    private Object parseJson(String json) throws JSONException {
+        json = json.trim();
+        if (json.startsWith("{")) {
+            return new JSONObject(json);
+        } else if (json.startsWith("[")) {
+            return new JSONArray(json);
+        } else {
+            throw new JSONException("Invalid JSON format");
+        }
+    }
+    
+    private void logDetailedElement(Object element, String description) {
+        if (!enableDetailedLogging) return;
+        
+        try {
+            String elementStr = element.toString();
+            if (elementStr.length() > 200) {
+                elementStr = elementStr.substring(0, 200) + "...";
+            }
+            logger.debug(description + ": " + elementStr);
+        } catch (Exception e) {
+            logger.debug(description + ": [Error converting to string]");
+        }
+    }
+    
+    private void logSuccess(String path, String message) {
+        if (!enableDetailedLogging) return;
+        logger.debug("[MATCH] " + path + ": " + message);
+    }
+    
+    private void logMismatch(String path, String message, boolean isWarning) {
+        ComparisonResult result = new ComparisonResult(path, false, message);
+        allMismatches.add(result);
+        
+        if (enableDetailedLogging) {
+            String logMsg = "[MISMATCH] " + path + ": " + message;
+            if (isWarning) {
+                logger.warn(logMsg);
+            } else {
+                logger.error(logMsg);
+            }
+        }
+    }
+    
+    // ===== Configuration Methods =====
+    
+    public DeepJsonComparator withNumericTolerance(double tolerance) {
+        this.numericTolerance = tolerance;
+        return this;
+    }
+    
+    public DeepJsonComparator withDetailedLogging(boolean enable) {
+        this.enableDetailedLogging = enable;
+        return this;
+    }
+    
+    public DeepJsonComparator withExtraFieldCheck(boolean check) {
+        this.checkExtraFields = check;
+        return this;
+    }
+    
+    public DeepJsonComparator withMaxDepth(int depth) {
+        this.maxDepth = depth;
+        return this;
+    }
+    
+    public DeepJsonComparator withNullAsEmpty(boolean treatNullAsEmpty) {
+        this.treatNullAsEmpty = treatNullAsEmpty;
+        return this;
+    }
+    
+    // ===== Result Classes =====
+    
+    public static class ComparisonResult {
+        public final String path;
+        public final boolean success;
+        public final String message;
+        
+        ComparisonResult(String path, boolean success, String message) {
+            this.path = path;
+            this.success = success;
+            this.message = message;
+        }
+        
+        @Override
+        public String toString() {
+            return String.format("[%s] %s: %s", success ? "MATCH" : "MISMATCH", path, message);
+        }
+    }
+    
+    public static class ComparisonReport {
+        public final boolean success;
+        public final int totalComparisons;
+        public final int successfulComparisons;
+        public final List<ComparisonResult> mismatches;
+        
+        ComparisonReport(boolean success, int totalComparisons, int successfulComparisons, 
+                        List<ComparisonResult> mismatches) {
+            this.success = success;
+            this.totalComparisons = totalComparisons;
+            this.successfulComparisons = successfulComparisons;
+            this.mismatches = Collections.unmodifiableList(mismatches);
+        }
+        
+        public void printSummary() {
+            Reporter.log("===== JSON Comparison Summary =====");
+            Reporter.log("Total comparisons: " + totalComparisons);
+            Reporter.log("Successful comparisons: " + successfulComparisons);
+            Reporter.log("Failed comparisons: " + mismatches.size());
+            Reporter.log("Overall result: " + (success ? "PASS" : "FAIL"));
+            
+            if (!mismatches.isEmpty()) {
+                Reporter.log("\n===== Mismatches =====");
+                for (ComparisonResult mismatch : mismatches) {
+                    Reporter.log(mismatch.toString(), "fail");
+                }
+            }
+        }
+        
+        public String getSummaryString() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("JSON Comparison: ").append(success ? "PASSED" : "FAILED");
+            sb.append(" (").append(successfulComparisons).append("/").append(totalComparisons).append(" matches)");
+            if (!success) {
+                sb.append(" - ").append(mismatches.size()).append(" mismatches found");
+            }
+            return sb.toString();
+        }
+    }
+}
+
+package com.qaf.framework.stepdefs;
+
+import com.qaf.framework.util.DeepJsonComparator;
+import com.qaf.framework.util.DeepJsonComparator.ComparisonReport;
+import com.qmetry.qaf.automation.step.QAFTestStep;
+import com.qmetry.qaf.automation.util.Reporter;
+import com.qmetry.qaf.automation.util.Validator;
+import static org.testng.Assert.*;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+/**
+ * Test steps for JSON comparison with complex, unordered structures
+ */
+public class JsonComparisonSteps {
+    
+    private DeepJsonComparator comparator;
+    private ComparisonReport lastReport;
+    
+    public JsonComparisonSteps() {
+        // Initialize with default settings
+        this.comparator = new DeepJsonComparator()
+            .withNumericTolerance(1e-9)
+            .withDetailedLogging(true)
+            .withExtraFieldCheck(true)
+            .withMaxDepth(100);
+    }
+    
+    /**
+     * Compare two JSON strings with deep unordered comparison
+     */
+    @QAFTestStep(description = "I compare expected JSON {expectedJson} with actual JSON {actualJson}")
+    public void compareJsonStrings(String expectedJson, String actualJson) {
+        Reporter.log("Starting deep JSON comparison");
+        
+        lastReport = comparator.compareJson(expectedJson, actualJson);
+        lastReport.printSummary();
+        
+        if (!lastReport.success) {
+            fail("JSON comparison failed. See detailed report above.");
+        }
+    }
+    
+    /**
+     * Compare JSON from files
+     */
+    @QAFTestStep(description = "I compare expected JSON from file {expectedFile} with actual JSON from file {actualFile}")
+    public void compareJsonFiles(String expectedFile, String actualFile) throws IOException {
+        String expectedJson = new String(Files.readAllBytes(Paths.get(expectedFile)));
+        String actualJson = new String(Files.readAllBytes(Paths.get(actualFile)));
+        
+        compareJsonStrings(expectedJson, actualJson);
+    }
+    
+    /**
+     * Configure numeric tolerance for comparison
+     */
+    @QAFTestStep(description = "I set numeric comparison tolerance to {tolerance}")
+    public void setNumericTolerance(double tolerance) {
+        comparator = comparator.withNumericTolerance(tolerance);
+        Reporter.log("Set numeric tolerance to: " + tolerance);
+    }
+    
+    /**
+     * Configure whether to check for extra fields
+     */
+    @QAFTestStep(description = "I {enableOrDisable} extra field checking in JSON comparison")
+    public void setExtraFieldCheck(String enableOrDisable) {
+        boolean enable = enableOrDisable.equalsIgnoreCase("enable");
+        comparator = comparator.withExtraFieldCheck(enable);
+        Reporter.log((enable ? "Enabled" : "Disabled") + " extra field checking");
+    }
+    
+    /**
+     * Configure whether to treat null as empty
+     */
+    @QAFTestStep(description = "I {enableOrDisable} treating null as empty in JSON comparison")
+    public void setNullAsEmpty(String enableOrDisable) {
+        boolean enable = enableOrDisable.equalsIgnoreCase("enable");
+        comparator = comparator.withNullAsEmpty(enable);
+        Reporter.log((enable ? "Enabled" : "Disabled") + " treating null as empty");
+    }
+    
+    /**
+     * Verify the last comparison had a specific number of mismatches
+     */
+    @QAFTestStep(description = "the JSON comparison should have {expectedCount} mismatches")
+    public void verifyMismatchCount(int expectedCount) {
+        assertNotNull(lastReport, "No comparison has been performed yet");
+        assertEquals(lastReport.mismatches.size(), expectedCount, 
+                    "Unexpected number of mismatches");
+    }
+    
+    /**
+     * Example usage method showing how to handle complex JSONs
+     */
+    public void exampleUsage() {
+        // Example 1: Complex nested structures with arrays in different order
+        String complexExpected = """
+        {
+            "users": [
+                {
+                    "id": 1,
+                    "name": "John",
+                    "scores": [85.5, 90.0, 78.3],
+                    "address": {
+                        "city": "New York",
+                        "zip": "10001"
+                    }
+                },
+                {
+                    "id": 2,
+                    "name": "Jane",
+                    "scores": [92.0, 88.5, 95.0],
+                    "address": {
+                        "city": "Los Angeles",
+                        "zip": "90001"
+                    }
+                }
+            ],
+            "metadata": {
+                "version": "1.0",
+                "timestamp": 1234567890
+            }
+        }
+        """;
+        
+        String complexActual = """
+        {
+            "metadata": {
+                "timestamp": 1234567890,
+                "version": "1.0"
+            },
+            "users": [
+                {
+                    "address": {
+                        "zip": "90001",
+                        "city": "Los Angeles"
+                    },
+                    "name": "Jane",
+                    "scores": [95.0, 88.5, 92.0],
+                    "id": 2
+                },
+                {
+                    "scores": [78.3, 90.0, 85.5],
+                    "id": 1,
+                    "address": {
+                        "zip": "10001",
+                        "city": "New York"
+                    },
+                    "name": "John"
+                }
+            ]
+        }
+        """;
+        
+        ComparisonReport report = comparator.compareJson(complexExpected, complexActual);
+        report.printSummary();
+        
+        // Example 2: Handling numeric precision issues
+        String numericExpected = """
+        {
+            "values": [
+                {"id": 1, "percentage": 4.30198},
+                {"id": 2, "percentage": 0.0},
+                {"id": 3, "percentage": 99.9999999999}
+            ]
+        }
+        """;
+        
+        String numericActual = """
+        {
+            "values": [
+                {"percentage": 0, "id": 2},
+                {"id": 1, "percentage": 4.3019799999999995},
+                {"percentage": 100.0, "id": 3}
+            ]
+        }
+        """;
+        
+        // This will handle the numeric differences with tolerance
+        report = comparator.compareJson(numericExpected, numericActual);
+        report.printSummary();
+    }
+    
+    /**
+     * Compare API response JSONs with tolerance for dynamic fields
+     */
+    @QAFTestStep(description = "I compare API response ignoring dynamic fields")
+    public void compareApiResponses() {
+        // You can create a custom comparator for API responses
+        DeepJsonComparator apiComparator = new DeepJsonComparator()
+            .withNumericTolerance(1e-6)  // More lenient for API responses
+            .withExtraFieldCheck(false)   // Don't fail on extra fields from API
+            .withNullAsEmpty(true);       // Treat null and empty as same
+        
+        // Use this for API response comparison
+    }
+    
+    /**
+     * Utility method to validate specific paths in JSON
+     */
+    @QAFTestStep(description = "I verify path {jsonPath} in last comparison {shouldOrShouldNot} have mismatches")
+    public void verifyPathMismatch(String jsonPath, String shouldOrShouldNot) {
+        assertNotNull(lastReport, "No comparison has been performed yet");
+        
+        boolean shouldHaveMismatch = !shouldOrShouldNot.contains("not");
+        boolean hasMismatch = lastReport.mismatches.stream()
+            .anyMatch(m -> m.path.startsWith(jsonPath));
+        
+        if (shouldHaveMismatch) {
+            assertTrue(hasMismatch, "Expected mismatches at path: " + jsonPath);
+        } else {
+            assertFalse(hasMismatch, "Unexpected mismatches at path: " + jsonPath);
+        }
+    }
+    
+    /**
+     * Print specific mismatches for a path pattern
+     */
+    @QAFTestStep(description = "I print mismatches for path pattern {pathPattern}")
+    public void printMismatchesForPath(String pathPattern) {
+        if (lastReport == null || lastReport.mismatches.isEmpty()) {
+            Reporter.log("No mismatches to display");
+            return;
+        }
+        
+        Reporter.log("Mismatches for pattern: " + pathPattern);
+        lastReport.mismatches.stream()
+            .filter(m -> m.path.contains(pathPattern))
+            .forEach(m -> Reporter.log(m.toString(), "fail"));
+    }
+}
+
+/**
+ * Example of using the comparator in test assertions
+ */
+class JsonComparisonAssertions {
+    
+    /**
+     * Assert JSONs match with custom configuration
+     */
+    public static void assertJsonEquals(String expected, String actual, 
+                                      double numericTolerance, 
+                                      boolean checkExtraFields) {
+        DeepJsonComparator comparator = new DeepJsonComparator()
+            .withNumericTolerance(numericTolerance)
+            .withExtraFieldCheck(checkExtraFields)
+            .withDetailedLogging(true);
+        
+        ComparisonReport report = comparator.compareJson(expected, actual);
+        
+        if (!report.success) {
+            report.printSummary();
+            fail("JSON comparison failed: " + report.getSummaryString());
+        }
+    }
+    
+    /**
+     * Assert JSONs match with default settings
+     */
+    public static void assertJsonEquals(String expected, String actual) {
+        assertJsonEquals(expected, actual, 1e-9, true);
+    }
+    
+    /**
+     * Assert JSONs match ignoring extra fields (useful for API responses)
+     */
+    public static void assertJsonEqualsIgnoreExtra(String expected, String actual) {
+        assertJsonEquals(expected, actual, 1e-9, false);
+    }
+}
+
+}

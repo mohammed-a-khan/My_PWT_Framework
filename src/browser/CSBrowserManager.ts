@@ -228,7 +228,7 @@ export class CSBrowserManager {
         return args;
     }
 
-    public async createContext(): Promise<void> {
+    private async createContext(): Promise<void> {
         if (!this.browser) {
             throw new Error('Browser not launched');
         }
@@ -360,7 +360,7 @@ export class CSBrowserManager {
         this.context.setDefaultNavigationTimeout(this.config.getNumber('BROWSER_NAVIGATION_TIMEOUT', 30000));
     }
 
-    public async createPage(): Promise<void> {
+    private async createPage(): Promise<void> {
         if (!this.context) {
             throw new Error('Context not created');
         }
@@ -822,9 +822,24 @@ export class CSBrowserManager {
     }
 
     public async closeAll(finalStatus?: 'passed' | 'failed'): Promise<void> {
+        const browserReuseEnabled = this.config.getBoolean('BROWSER_REUSE_ENABLED', false);
+
+        // Remember video capture mode and final status for later cleanup
+        // Video files are only created after context closes, so we can't get the path yet
+        const videoCaptureMode = this.config.get('BROWSER_VIDEO', 'off').toLowerCase();
+
+        const shouldDeleteVideosAfterClose = browserReuseEnabled &&
+                                            videoCaptureMode !== 'never' &&
+                                            videoCaptureMode !== 'off' &&
+                                            this.shouldDeleteArtifact(videoCaptureMode, finalStatus);
+
+        if (shouldDeleteVideosAfterClose) {
+            CSReporter.debug(`Videos will be deleted after context closes (browser reuse, capture mode: ${videoCaptureMode}, tests ${finalStatus})`);
+        }
+
         // Handle HAR file for browser reuse scenario
         // When browser reuse is enabled, HAR accumulates across all scenarios
-        if (this.currentHarPath && this.config.getBoolean('BROWSER_REUSE_ENABLED', false)) {
+        if (this.currentHarPath && browserReuseEnabled) {
             const harCaptureMode = this.config.get('HAR_CAPTURE_MODE', 'never').toLowerCase();
 
             // Determine final HAR status based on capture mode
@@ -848,8 +863,73 @@ export class CSBrowserManager {
         // Skip trace save in closeContext as traces are already saved per-scenario
         await this.closeContext(undefined, true);
 
-        // Delete HARs marked for deletion AFTER context is closed
+        // Wait for video/HAR files to be fully written by Playwright
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Delete videos if needed (for browser reuse scenario)
         const fs = require('fs');
+        const path = require('path');
+        if (shouldDeleteVideosAfterClose) {
+            try {
+                // Get results manager singleton (may be different in worker context)
+                const resultsManager = CSTestResultsManager.getInstance();
+                const dirs = resultsManager.getDirectories();
+                const videoDir = dirs.videos;
+
+                if (fs.existsSync(videoDir)) {
+                    const videoFiles = fs.readdirSync(videoDir).filter((file: string) =>
+                        file.endsWith('.webm') || file.endsWith('.mp4')
+                    );
+
+                    for (const videoFile of videoFiles) {
+                        const videoPath = path.join(videoDir, videoFile);
+                        let retries = 3;
+                        while (retries > 0) {
+                            try {
+                                fs.unlinkSync(videoPath);
+                                CSReporter.debug(`Video deleted (browser reuse, all tests passed): ${videoFile}`);
+                                break;
+                            } catch (error: any) {
+                                retries--;
+                                if (retries > 0 && error.code === 'EBUSY') {
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                } else {
+                                    CSReporter.debug(`Failed to delete video ${videoFile}: ${error.message}`);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (error: any) {
+                CSReporter.debug(`Error cleaning up videos: ${error.message}`);
+            }
+        }
+
+        // Delete videos that were marked for deletion from close() method (non-browser-reuse scenarios)
+        for (const videoToDelete of this.videosToDelete) {
+            let retries = 3;
+            while (retries > 0) {
+                try {
+                    if (fs.existsSync(videoToDelete)) {
+                        fs.unlinkSync(videoToDelete);
+                        CSReporter.debug(`Video deleted: ${videoToDelete}`);
+                        break;
+                    }
+                } catch (error: any) {
+                    retries--;
+                    if (retries > 0 && error.code === 'EBUSY') {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    } else {
+                        CSReporter.debug(`Failed to delete video: ${error}`);
+                        break;
+                    }
+                }
+            }
+        }
+        this.videosToDelete = [];
+
+        // Delete HARs marked for deletion AFTER context is closed
         for (const harToDelete of this.harsToDelete) {
             try {
                 if (fs.existsSync(harToDelete)) {

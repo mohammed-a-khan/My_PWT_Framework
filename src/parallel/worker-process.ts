@@ -524,13 +524,21 @@ class WorkerProcess {
 
     private async cleanup() {
         try {
-            // Close the browser when worker is terminating
-            // Pass overall test status for proper HAR handling
-            if (this.browserManager) {
-                const finalStatus = this.anyTestFailed ? 'failed' : 'passed';
-                console.log(`[Worker ${this.workerId}] Closing browser (overall: ${finalStatus})...`);
-                await this.browserManager.closeAll(finalStatus);
-                console.log(`[Worker ${this.workerId}] Browser closed, HAR saved if needed`);
+            // Get browser manager singleton - it's created by the BDD runner, not stored in this.browserManager
+            const browserLaunchRequired = this.configManager?.getBoolean('BROWSER_LAUNCH_REQUIRED', true);
+
+            if (browserLaunchRequired !== false) {
+                try {
+                    const { CSBrowserManager } = this.getModule('../browser/CSBrowserManager');
+                    const browserManager = CSBrowserManager.getInstance();
+
+                    const finalStatus = this.anyTestFailed ? 'failed' : 'passed';
+                    console.log(`[Worker ${this.workerId}] Closing browser (overall: ${finalStatus})...`);
+                    await browserManager.closeAll(finalStatus);
+                    console.log(`[Worker ${this.workerId}] Browser closed, HAR/video artifacts handled`);
+                } catch (error: any) {
+                    // Browser manager not initialized (e.g., API-only tests)
+                }
             }
 
             if (this.bddRunner && typeof this.bddRunner.cleanup === 'function') {

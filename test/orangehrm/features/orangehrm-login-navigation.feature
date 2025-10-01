@@ -58,3 +58,18 @@ Feature: Orange HRM Demo Site - Login and Navigation
     And I click on Logout option
     Then I should be redirected to login page
     And I should see the login form
+
+  @TC504 @negative @security
+  Scenario: Login with invalid credentials - duplicate
+    When I enter username "InvalidUser" and password "wrongpassword"  
+    And I click on the Login button
+    Then I should see an error message "Invalid credentials"
+    And I should remain on the login page
+
+  @TC505 @smoke @logout
+  Scenario: User logout functionality - duplicate
+    Given I am logged in to Orange HRM application
+    When I click on user profile dropdown
+    And I click on Logout option
+    Then I should be redirected to login page
+    And I should see the login form
