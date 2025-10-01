@@ -228,7 +228,7 @@ export class CSBrowserManager {
         return args;
     }
 
-    private async createContext(): Promise<void> {
+    public async createContext(): Promise<void> {
         if (!this.browser) {
             throw new Error('Browser not launched');
         }
@@ -360,7 +360,7 @@ export class CSBrowserManager {
         this.context.setDefaultNavigationTimeout(this.config.getNumber('BROWSER_NAVIGATION_TIMEOUT', 30000));
     }
 
-    private async createPage(): Promise<void> {
+    public async createPage(): Promise<void> {
         if (!this.context) {
             throw new Error('Context not created');
         }
